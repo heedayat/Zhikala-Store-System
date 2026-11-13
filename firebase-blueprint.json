@@ -1,0 +1,372 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A toy shop inventory item with pricing, stock level, barcode, compressed photos, and optional merchandising details.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the shop owner who owns this inventory item.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the toy product.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "barcode": {
+          "type": "string",
+          "description": "Optional unique barcode digits for USB scanner lookup and label printing.",
+          "maxLength": 64
+        },
+        "category": {
+          "type": "string",
+          "description": "Free-text product category suggested from previously used categories.",
+          "maxLength": 80
+        },
+        "sellingPrice": {
+          "type": "number",
+          "description": "Retail selling price in the shop currency (e.g. IQD whole numbers)."
+        },
+        "costPrice": {
+          "type": "number",
+          "description": "Wholesale unit cost price in the shop currency."
+        },
+        "quantityInStock": {
+          "type": "number",
+          "description": "Current on-hand unit count (may become negative when oversold at the counter)."
+        },
+        "reorderLevel": {
+          "type": "number",
+          "description": "Optional low-stock threshold; items at or below this count are flagged low stock."
+        },
+        "photos": {
+          "type": "array",
+          "description": "List of product photo URLs or compressed JPEG data URLs."
+        },
+        "brand": {
+          "type": "string",
+          "description": "Optional manufacturer or toy brand.",
+          "maxLength": 80
+        },
+        "ageRange": {
+          "type": "string",
+          "description": "Optional recommended age group (e.g. 3-6 years).",
+          "maxLength": 40
+        },
+        "supplier": {
+          "type": "string",
+          "description": "Optional supplier or distributor name.",
+          "maxLength": 100
+        },
+        "variantLabel": {
+          "type": "string",
+          "description": "Optional size, color, or edition label.",
+          "maxLength": 60
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional internal shopkeeper notes.",
+          "maxLength": 1000
+        },
+        "isArchived": {
+          "type": "boolean",
+          "description": "Soft-archive flag so historical sales records are preserved."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the product was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the product was last modified."
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "sellingPrice",
+        "costPrice",
+        "quantityInStock",
+        "photos",
+        "isArchived",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Immutable ledger record for every stock quantity change from restock, removal, sale, or voided sale.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the shop owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "description": "Referenced product document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productName": {
+          "type": "string",
+          "description": "Snapshot of the product name at the time of the stock change.",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "type": {
+          "type": "string",
+          "enum": ["add", "remove", "sale", "void"],
+          "description": "Direction/source of stock movement."
+        },
+        "quantityChange": {
+          "type": "number",
+          "description": "Signed quantity delta (positive for add/void, negative for remove/sale)."
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "New stock arrived",
+            "Customer return",
+            "Correction",
+            "Damaged",
+            "Lost",
+            "Other",
+            "Sale",
+            "Sale voided"
+          ],
+          "description": "Reason for the stock change."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional note about the shipment, damage, sale, or void.",
+          "maxLength": 500
+        },
+        "costPrice": {
+          "type": "number",
+          "description": "Optional unit cost price recorded when adding stock."
+        },
+        "saleId": {
+          "type": "string",
+          "description": "Optional linked sale document ID for sale or void movements.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the movement."
+        }
+      },
+      "required": [
+        "ownerId",
+        "productId",
+        "productName",
+        "type",
+        "quantityChange",
+        "reason",
+        "createdAt"
+      ]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Cash-only counter sale with immutable line item snapshots (list price, sold price, cost price) and void support.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the shop owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "items": {
+          "type": "array",
+          "description": "Sold line items capturing product, quantity, listPrice, unitPrice, costPrice, and lineTotal."
+        },
+        "totalAmount": {
+          "type": "number",
+          "description": "Total cash sale amount actually charged."
+        },
+        "totalCost": {
+          "type": "number",
+          "description": "Total wholesale cost snapshot at the time of sale."
+        },
+        "itemCount": {
+          "type": "number",
+          "description": "Total unit count sold."
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["cash"],
+          "description": "Always cash for counter sales."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional free-text note for end-of-day reconciliation (e.g. FIB transfer).",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "voided"],
+          "description": "Sale lifecycle state; voided sales restore stock and remain archived."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the sale completed."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        },
+        "voidedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the sale was voided."
+        }
+      },
+      "required": [
+        "ownerId",
+        "items",
+        "totalAmount",
+        "totalCost",
+        "itemCount",
+        "paymentMethod",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ShopSettings": {
+      "title": "ShopSettings",
+      "description": "Shop display name and currency preferences for the counter inventory app.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the shop user who initialized settings.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "shopName": {
+          "type": "string",
+          "description": "Name of the toy shop shown in the app header and printed labels.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency code or label shown next to prices (e.g. IQD).",
+          "minLength": 1,
+          "maxLength": 12
+        },
+        "weekStartDay": {
+          "type": "number",
+          "description": "Day of week reports start on (0=Sunday through 6=Saturday; defaults to 6=Saturday)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "shopName",
+        "currency",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "User": {
+      "title": "User",
+      "description": "Authorized Google account record keyed by lowercase email address.",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the authorized user.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "owner"],
+          "description": "Access role; both roles access all shop features, only admin manages users."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the user currently has access to the store."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user was added."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional server timestamp when the user record was last modified."
+        }
+      },
+      "required": [
+        "displayName",
+        "role",
+        "active",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userEmail}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Authorized shop users keyed by lowercase Google email address."
+    },
+    "/products/{productId}": {
+      "schema": {
+        "$ref": "#/entities/Product"
+      },
+      "description": "Shop toy products catalog and live stock levels."
+    },
+    "/stockMovements/{movementId}": {
+      "schema": {
+        "$ref": "#/entities/StockMovement"
+      },
+      "description": "Immutable stock movement audit log."
+    },
+    "/sales/{saleId}": {
+      "schema": {
+        "$ref": "#/entities/Sale"
+      },
+      "description": "Counter cash sales history and reconciliation records."
+    },
+    "/settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/ShopSettings"
+      },
+      "description": "Shop configuration document (e.g. shop name and currency)."
+    }
+  }
+}

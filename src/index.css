@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    color: #0f172a;
+    background-color: #ffffff;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Print-only stylesheet for barcode labels, cash receipts & multi-page reports */
+.print-only {
+  display: none;
+}
+
+@media print {
+  .print-only {
+    display: block !important;
+  }
+
+  body:not(.print-report-mode) * {
+    visibility: hidden !important;
+  }
+
+  body:not(.print-report-mode) #printable-barcode-label,
+  body:not(.print-report-mode) #printable-barcode-label *,
+  body:not(.print-report-mode) #printable-receipt,
+  body:not(.print-report-mode) #printable-receipt * {
+    visibility: visible !important;
+  }
+
+  body:not(.print-report-mode) #printable-barcode-label {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 8mm !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    width: auto !important;
+  }
+
+  body:not(.print-report-mode) #printable-receipt {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 6mm !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    width: 80mm !important;
+    max-width: 100% !important;
+  }
+
+  body.print-report-mode aside,
+  body.print-report-mode .print-hidden {
+    display: none !important;
+  }
+
+  body.print-report-mode,
+  body.print-report-mode #root,
+  body.print-report-mode #root > div,
+  body.print-report-mode #reports-scroll-container {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  body.print-report-mode #printable-report {
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  body.print-report-mode .print-break-avoid {
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 10mm;
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Toybox Inventory",
+  "description": "Counter inventory and sales management system for a toy shop with barcode scanning, label printing, and stock tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

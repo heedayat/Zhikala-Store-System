@@ -1,0 +1,499 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isVerifiedSignedIn() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true;
+    }
+
+    function userEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function userDocPath(email) {
+      return /databases/$(database)/documents/users/$(email);
+    }
+
+    function isBootstrapAdmin() {
+      return isVerifiedSignedIn()
+        && userEmail() == 'gamerhidayatgamer@gmail.com';
+    }
+
+    function isActiveShopUser() {
+      return isBootstrapAdmin()
+        || (
+          isVerifiedSignedIn()
+          && exists(userDocPath(userEmail()))
+          && get(userDocPath(userEmail())).data.active == true
+          && get(userDocPath(userEmail())).data.role in ['admin', 'owner']
+        );
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || (
+          isVerifiedSignedIn()
+          && exists(userDocPath(userEmail()))
+          && get(userDocPath(userEmail())).data.active == true
+          && get(userDocPath(userEmail())).data.role == 'admin'
+        );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailId(emailId) {
+      return emailId is string
+        && emailId.size() >= 3
+        && emailId.size() <= 254
+        && emailId == emailId.lower()
+        && emailId.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isOptionalId(data, field) {
+      return !(field in data) || isValidId(data[field]);
+    }
+
+    function isOptionalNumber(data, field, minVal, maxVal) {
+      return !(field in data) || ((data[field] is int || data[field] is float) && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    function isOptionalInt(data, field, minVal, maxVal) {
+      return !(field in data) || (data[field] is int && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll([
+          'displayName',
+          'role',
+          'active',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'displayName',
+          'role',
+          'active',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.role in ['admin', 'owner']
+        && data.active is bool
+        && data.createdAt is timestamp
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidPhotosList(photos) {
+      return photos is list
+        && photos.size() <= 8
+        && (photos.size() == 0 || (photos[0] is string && photos[0].size() <= 350000));
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'name',
+          'sellingPrice',
+          'costPrice',
+          'quantityInStock',
+          'photos',
+          'isArchived',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'name',
+          'barcode',
+          'category',
+          'sellingPrice',
+          'costPrice',
+          'quantityInStock',
+          'reorderLevel',
+          'photos',
+          'brand',
+          'ageRange',
+          'supplier',
+          'variantLabel',
+          'notes',
+          'isArchived',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && isOptionalString(data, 'barcode', 64)
+        && isOptionalString(data, 'category', 80)
+        && (data.sellingPrice is int || data.sellingPrice is float) && data.sellingPrice >= 0 && data.sellingPrice <= 1000000000
+        && (data.costPrice is int || data.costPrice is float) && data.costPrice >= 0 && data.costPrice <= 1000000000
+        // Whole numbers only; stock may go below zero when oversold at the counter
+        && data.quantityInStock is int && data.quantityInStock >= -1000000 && data.quantityInStock <= 1000000
+        && isOptionalInt(data, 'reorderLevel', 0, 1000000)
+        && isValidPhotosList(data.photos)
+        && isOptionalString(data, 'brand', 80)
+        && isOptionalString(data, 'ageRange', 40)
+        && isOptionalString(data, 'supplier', 100)
+        && isOptionalString(data, 'variantLabel', 60)
+        && isOptionalString(data, 'notes', 1000)
+        && data.isArchived is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStockMovementReason(type, reason) {
+      return (type == 'add' && reason in ['New stock arrived', 'Customer return', 'Correction'])
+        || (type == 'remove' && reason in ['Damaged', 'Lost', 'Correction', 'Other'])
+        || (type == 'sale' && reason == 'Sale')
+        || (type == 'void' && reason == 'Sale voided');
+    }
+
+    function isValidStockMovement(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'productId',
+          'productName',
+          'type',
+          'quantityChange',
+          'reason',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'productId',
+          'productName',
+          'type',
+          'quantityChange',
+          'reason',
+          'note',
+          'costPrice',
+          'saleId',
+          'createdAt'
+        ])
+        && isValidId(data.ownerId)
+        && isValidId(data.productId)
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 160
+        && data.type in ['add', 'remove', 'sale', 'void']
+        && data.quantityChange is int
+        && (
+          ((data.type == 'add' || data.type == 'void') && data.quantityChange >= 1 && data.quantityChange <= 1000000) ||
+          ((data.type == 'remove' || data.type == 'sale') && data.quantityChange <= -1 && data.quantityChange >= -1000000)
+        )
+        && data.reason is string
+        && isValidStockMovementReason(data.type, data.reason)
+        && isOptionalString(data, 'note', 500)
+        && isOptionalNumber(data, 'costPrice', 0, 1000000000)
+        && isOptionalId(data, 'saleId')
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSaleItem(item) {
+      return item is map
+        && item.keys().hasAll([
+          'productId',
+          'productName',
+          'barcode',
+          'quantity',
+          'listPrice',
+          'unitPrice',
+          'costPrice',
+          'lineTotal'
+        ])
+        && item.keys().hasOnly([
+          'productId',
+          'productName',
+          'barcode',
+          'quantity',
+          'listPrice',
+          'unitPrice',
+          'costPrice',
+          'lineTotal'
+        ])
+        && isValidId(item.productId)
+        && item.productName is string && item.productName.size() >= 1 && item.productName.size() <= 160
+        && item.barcode is string && item.barcode.size() <= 64
+        && item.quantity is int && item.quantity >= 1 && item.quantity <= 100000
+        && (item.listPrice is int || item.listPrice is float) && item.listPrice >= 0 && item.listPrice <= 1000000000
+        && (item.unitPrice is int || item.unitPrice is float) && item.unitPrice >= 0 && item.unitPrice <= 1000000000
+        && (item.costPrice is int || item.costPrice is float) && item.costPrice >= 0 && item.costPrice <= 1000000000
+        && (item.lineTotal is int || item.lineTotal is float) && item.lineTotal >= 0 && item.lineTotal <= 100000000000;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'items',
+          'totalAmount',
+          'totalCost',
+          'itemCount',
+          'paymentMethod',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'items',
+          'totalAmount',
+          'totalCost',
+          'itemCount',
+          'paymentMethod',
+          'note',
+          'status',
+          'createdAt',
+          'updatedAt',
+          'voidedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.items is list
+        && data.items.size() >= 1
+        && data.items.size() <= 100
+        && isValidSaleItem(data.items[0])
+        && (data.totalAmount is int || data.totalAmount is float) && data.totalAmount >= 0 && data.totalAmount <= 100000000000
+        && (data.totalCost is int || data.totalCost is float) && data.totalCost >= 0 && data.totalCost <= 100000000000
+        && data.itemCount is int && data.itemCount >= 1 && data.itemCount <= 1000000
+        && data.paymentMethod == 'cash'
+        && isOptionalString(data, 'note', 500)
+        && data.status in ['completed', 'voided']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!('voidedAt' in data) || data.voidedAt is timestamp);
+    }
+
+    function isValidShopSettings(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'shopName',
+          'currency',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'shopName',
+          'currency',
+          'weekStartDay',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 80
+        && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 12
+        && (!('weekStartDay' in data) || (data.weekStartDay is int && data.weekStartDay >= 0 && data.weekStartDay <= 6))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{emailId} {
+      allow get: if isActiveShopUser()
+        && isValidEmailId(emailId)
+        && (emailId == userEmail() || isAdmin());
+
+      allow list: if isAdmin();
+
+      allow create: if isAdmin()
+        && isValidEmailId(emailId)
+        && isValidUser(incoming())
+        && incoming().createdAt == request.time
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time);
+
+      allow update: if isAdmin()
+        && isValidEmailId(emailId)
+        && isValidUser(incoming())
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
+        && !(emailId == userEmail() && (incoming().role != 'admin' || incoming().active != true))
+        && (
+          (
+            'createdAt' in existing()
+            && existing().createdAt is timestamp
+            && incoming().createdAt == existing().createdAt
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName',
+              'role',
+              'active',
+              'updatedAt'
+            ])
+          ) || (
+            isBootstrapAdmin()
+            && emailId == userEmail()
+            && (!('createdAt' in existing()) || !(existing().createdAt is timestamp))
+            && incoming().createdAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName',
+              'role',
+              'active',
+              'createdAt',
+              'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    match /products/{productId} {
+      allow get: if isActiveShopUser()
+        && isValidId(productId);
+
+      allow list: if isActiveShopUser();
+
+      allow create: if isActiveShopUser()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isActiveShopUser()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'barcode',
+            'category',
+            'sellingPrice',
+            'costPrice',
+            'quantityInStock',
+            'reorderLevel',
+            'photos',
+            'brand',
+            'ageRange',
+            'supplier',
+            'variantLabel',
+            'notes',
+            'isArchived',
+            'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'quantityInStock',
+            'costPrice',
+            'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'quantityInStock',
+            'updatedAt'
+          ]) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'isArchived',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+    }
+
+    match /stockMovements/{movementId} {
+      allow get: if isActiveShopUser()
+        && isValidId(movementId);
+
+      allow list: if isActiveShopUser();
+
+      allow create: if isActiveShopUser()
+        && isValidId(movementId)
+        && isValidStockMovement(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && (
+          (
+            exists(/databases/$(database)/documents/products/$(incoming().productId))
+            && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.quantityInStock
+              == get(/databases/$(database)/documents/products/$(incoming().productId)).data.quantityInStock + incoming().quantityChange
+            && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.updatedAt == request.time
+          ) ||
+          (
+            !exists(/databases/$(database)/documents/products/$(incoming().productId))
+            && existsAfter(/databases/$(database)/documents/products/$(incoming().productId))
+            && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.ownerId == request.auth.uid
+            && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.quantityInStock == incoming().quantityChange
+            && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.createdAt == request.time
+          )
+        );
+
+      allow update, delete: if false;
+    }
+
+    match /sales/{saleId} {
+      allow get: if isActiveShopUser()
+        && isValidId(saleId);
+
+      allow list: if isActiveShopUser();
+
+      allow create: if isActiveShopUser()
+        && isValidId(saleId)
+        && isValidSale(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().status == 'completed'
+        && !('voidedAt' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isActiveShopUser()
+        && isValidId(saleId)
+        && isValidSale(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && existing().status == 'completed'
+        && incoming().status == 'voided'
+        && incoming().voidedAt == request.time
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status',
+          'voidedAt',
+          'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow get: if isActiveShopUser()
+        && isValidId(settingId);
+
+      allow list: if isActiveShopUser();
+
+      allow create: if isActiveShopUser()
+        && isValidId(settingId)
+        && isValidShopSettings(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isActiveShopUser()
+        && isValidId(settingId)
+        && isValidShopSettings(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'shopName',
+          'currency',
+          'weekStartDay',
+          'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+  }
+}
