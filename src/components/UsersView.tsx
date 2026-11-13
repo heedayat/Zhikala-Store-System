@@ -9,12 +9,15 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { useTranslation } from '../contexts/I18nContext';
 import type { AppUser, UserRole } from '../types/inventory';
 import { formatActionError, formatNumber } from '../utils/formatters';
+import { getTranslations, interpolate, type AppLanguage } from '../utils/i18n';
 import {
   canModifyUserRole,
   canToggleUserActive,
-  countActiveAdmins,
+  countActiveManagers,
+  isValidUserRole,
   normalizeEmail,
   validateNewUserForm,
   type NewUserValidationErrors,
@@ -44,8 +47,14 @@ type PendingConfirmation =
       nextRole: UserRole;
     };
 
-function formatUserDate(date: Date | null | undefined): string {
+function formatUserDate(date: Date | null | undefined, lang: AppLanguage): string {
   if (!date) return '—';
+  if (lang === 'ku') {
+    const month = getTranslations('ku').monthsShort[
+      date.getMonth() as keyof ReturnType<typeof getTranslations>['monthsShort']
+    ];
+    return `${date.getDate()} ${month} ${date.getFullYear()}`;
+  }
   return date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -60,11 +69,12 @@ interface AddUserModalProps {
 }
 
 function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
+  const { lang, t } = useTranslation();
   const titleId = useId();
   const emailInputRef = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [role, setRole] = useState<UserRole>('owner');
+  const [role, setRole] = useState<UserRole>('cashier');
   const [errors, setErrors] = useState<NewUserValidationErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -84,7 +94,7 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
     e.preventDefault();
     if (isSaving) return;
 
-    const validation = validateNewUserForm({ email, displayName, role }, existingUsers);
+    const validation = validateNewUserForm({ email, displayName, role }, existingUsers, lang);
     if (!validation.valid) {
       setErrors(validation.errors);
       return;
@@ -107,25 +117,25 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-6"
+      className="modal-backdrop-enter fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6"
     >
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
+      <div className="modal-panel-enter bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-md overflow-hidden text-start">
+        <div className="px-5 sm:px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
           <h2 id={titleId} className="text-base font-bold text-slate-950">
-            Add User
+            {t.users.addUserTitle}
           </h2>
           <button
             type="button"
             disabled={isSaving}
             onClick={onClose}
-            aria-label="Close add user modal"
-            className="w-8 h-8 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center"
+            aria-label={t.users.closeAddModalAria}
+            className="w-9 h-9 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center transition-colors"
           >
             <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-4">
           {submitError && (
             <div
               role="alert"
@@ -137,19 +147,20 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
 
           <div>
             <label htmlFor="add-user-email" className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Google email address <span className="text-red-600">*</span>
+              {t.users.googleEmail} <span className="text-red-600">*</span>
             </label>
             <input
               ref={emailInputRef}
               id="add-user-email"
               type="email"
+              dir="ltr"
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
                 setErrors((prev) => ({ ...prev, email: undefined }));
               }}
               placeholder="name@gmail.com"
-              className={`w-full h-10 px-3 rounded-lg border text-sm font-mono text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
+              className={`ltr-isolate w-full h-10 px-3 rounded-lg border text-sm font-mono text-slate-900 placeholder:font-sans placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
                 errors.email
                   ? 'border-red-400 focus:border-red-600 focus:ring-red-500/15'
                   : 'border-slate-300 focus:border-blue-600 focus:ring-blue-600/15'
@@ -158,15 +169,13 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
             {errors.email ? (
               <p className="mt-1 text-xs text-red-600">{errors.email}</p>
             ) : (
-              <p className="mt-1 text-xs text-slate-500">
-                Stored lowercase as their Google Sign-In allowlist key.
-              </p>
+              <p className="mt-1 text-xs text-slate-500">{t.users.emailHint}</p>
             )}
           </div>
 
           <div>
             <label htmlFor="add-user-name" className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Display name <span className="text-red-600">*</span>
+              {t.users.displayName} <span className="text-red-600">*</span>
             </label>
             <input
               id="add-user-name"
@@ -177,7 +186,7 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
                 setDisplayName(e.target.value);
                 setErrors((prev) => ({ ...prev, displayName: undefined }));
               }}
-              placeholder="e.g. Shakar"
+              placeholder={t.users.displayNamePlaceholder}
               className={`w-full h-10 px-3 rounded-lg border text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
                 errors.displayName
                   ? 'border-red-400 focus:border-red-600 focus:ring-red-500/15'
@@ -191,16 +200,20 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
 
           <div>
             <label htmlFor="add-user-role" className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Role
+              {t.users.role}
             </label>
             <select
               id="add-user-role"
               value={role}
-              onChange={(e) => setRole(e.target.value === 'admin' ? 'admin' : 'owner')}
+              onChange={(e) => {
+                const next = e.target.value;
+                setRole(isValidUserRole(next) ? next : 'cashier');
+              }}
               className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
             >
-              <option value="owner">Owner — All shop features (Products, Sell, Stock, Reports)</option>
-              <option value="admin">Admin — All shop features + Manage Users</option>
+              <option value="cashier">{t.roles.cashierOptionDesc}</option>
+              <option value="owner">{t.roles.ownerOptionDesc}</option>
+              <option value="admin">{t.roles.adminOptionDesc}</option>
             </select>
           </div>
 
@@ -209,16 +222,16 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
               type="button"
               disabled={isSaving}
               onClick={onClose}
-              className="h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="min-h-[40px] px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition-all duration-200 ease-out active:scale-[0.98]"
             >
-              Cancel
+              {t.common.cancel}
             </button>
             <button
               type="submit"
               disabled={isSaving}
-              className="h-10 px-5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap"
+              className="min-h-[40px] px-5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-60 transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap"
             >
-              {isSaving ? 'Adding...' : 'Add user'}
+              {isSaving ? t.users.adding : t.users.addUser}
             </button>
           </div>
         </form>
@@ -235,6 +248,7 @@ export function UsersView({
   onAddUser,
   onUpdateUser,
 }: UsersViewProps) {
+  const { lang, t, roleLabel } = useTranslation();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -247,7 +261,7 @@ export function UsersView({
   const normalizedSelf = normalizeEmail(currentUserEmail);
   const activeCount = useMemo(() => users.filter((u) => u.active).length, [users]);
   const inactiveCount = users.length - activeCount;
-  const activeAdminCount = useMemo(() => countActiveAdmins(users), [users]);
+  const activeManagersCount = useMemo(() => countActiveManagers(users), [users]);
 
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -282,13 +296,17 @@ export function UsersView({
 
   function handleRoleSelectChange(targetUser: AppUser, nextRole: UserRole) {
     if (nextRole === targetUser.role) return;
-    const guard = canModifyUserRole(targetUser, nextRole, currentUserEmail, users);
+    const guard = canModifyUserRole(targetUser, nextRole, currentUserEmail, users, lang);
     if (!guard.allowed) {
-      setActionError(guard.reason ?? 'Cannot change this user role.');
+      setActionError(guard.reason ?? t.validation.userRoleInvalid);
       return;
     }
 
-    if (targetUser.role === 'admin' && nextRole === 'owner') {
+    const isDemotion =
+      (targetUser.role === 'admin' && nextRole !== 'admin') ||
+      (targetUser.role === 'owner' && nextRole === 'cashier');
+
+    if (isDemotion) {
       setConfirmError(null);
       setPendingConfirm({ type: 'demote', user: targetUser, nextRole });
       return;
@@ -297,15 +315,18 @@ export function UsersView({
     void applyUserUpdate(
       targetUser,
       { role: nextRole },
-      `${targetUser.displayName || targetUser.email} updated to ${nextRole}.`
+      interpolate(t.users.updatedRoleNotice, {
+        name: targetUser.displayName || targetUser.email,
+        role: roleLabel(nextRole),
+      })
     );
   }
 
   function handleActiveToggleClick(targetUser: AppUser) {
     const nextActive = !targetUser.active;
-    const guard = canToggleUserActive(targetUser, nextActive, currentUserEmail, users);
+    const guard = canToggleUserActive(targetUser, nextActive, currentUserEmail, users, lang);
     if (!guard.allowed) {
-      setActionError(guard.reason ?? 'Cannot update user status.');
+      setActionError(guard.reason ?? t.validation.onlyManagersUpdateUsers);
       return;
     }
 
@@ -318,7 +339,9 @@ export function UsersView({
     void applyUserUpdate(
       targetUser,
       { active: true },
-      `${targetUser.displayName || targetUser.email} reactivated.`
+      interpolate(t.users.reactivatedNotice, {
+        name: targetUser.displayName || targetUser.email,
+      })
     );
   }
 
@@ -329,16 +352,19 @@ export function UsersView({
     setActionError(null);
     setActionNotice(null);
 
+    const targetDisplay = pendingConfirm.user.displayName || pendingConfirm.user.email;
+
     try {
       if (pendingConfirm.type === 'deactivate') {
         await onUpdateUser(pendingConfirm.user.email, { active: false });
-        setActionNotice(
-          `${pendingConfirm.user.displayName || pendingConfirm.user.email} deactivated.`
-        );
+        setActionNotice(interpolate(t.users.deactivatedNotice, { name: targetDisplay }));
       } else {
         await onUpdateUser(pendingConfirm.user.email, { role: pendingConfirm.nextRole });
         setActionNotice(
-          `${pendingConfirm.user.displayName || pendingConfirm.user.email} role changed to ${pendingConfirm.nextRole}.`
+          interpolate(t.users.updatedRoleNotice, {
+            name: targetDisplay,
+            role: roleLabel(pendingConfirm.nextRole),
+          })
         );
       }
       setPendingConfirm(null);
@@ -349,22 +375,43 @@ export function UsersView({
     }
   }
 
+  const filterTabs: { id: 'all' | 'active' | 'inactive'; label: string }[] = [
+    { id: 'all', label: t.users.tabAll },
+    { id: 'active', label: t.users.tabActive },
+    { id: 'inactive', label: t.users.tabInactive },
+  ];
+
   return (
-    <div className="flex-1 flex flex-col min-w-0 bg-white">
+    <div className="flex-1 flex flex-col min-w-0 bg-white text-start">
       {/* Header */}
-      <header className="h-16 px-6 border-b border-slate-200 flex items-center justify-between gap-6 shrink-0">
-        <div className="flex items-baseline gap-4 min-w-0">
+      <header className="min-h-16 px-4 md:px-6 py-3 md:py-0 border-b border-slate-200 flex items-center justify-between gap-4 flex-wrap shrink-0">
+        <div className="flex items-baseline gap-3 md:gap-4 min-w-0 flex-wrap">
           <h1 className="text-lg font-bold text-slate-950 tracking-tight whitespace-nowrap">
-            Users
+            {t.users.title}
           </h1>
           <div className="flex items-center gap-2 text-xs text-slate-500 tabular-nums whitespace-nowrap">
-            <span>{formatNumber(activeCount)} active</span>
+            <span>
+              <span dir="ltr" className="ltr-isolate font-mono">
+                {formatNumber(activeCount)}
+              </span>{' '}
+              {t.users.activeLabel}
+            </span>
             <span aria-hidden="true">·</span>
-            <span>{formatNumber(activeAdminCount)} admin{activeAdminCount === 1 ? '' : 's'}</span>
+            <span>
+              <span dir="ltr" className="ltr-isolate font-mono">
+                {formatNumber(activeManagersCount)}
+              </span>{' '}
+              {t.users.managersLabel}
+            </span>
             {inactiveCount > 0 && (
               <>
                 <span aria-hidden="true">·</span>
-                <span>{formatNumber(inactiveCount)} inactive</span>
+                <span>
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(inactiveCount)}
+                  </span>{' '}
+                  {t.users.inactiveLabel}
+                </span>
               </>
             )}
           </div>
@@ -373,66 +420,66 @@ export function UsersView({
         <button
           type="button"
           onClick={() => setAddModalOpen(true)}
-          className="h-10 px-4 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          className="min-h-[40px] px-4 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-2 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
         >
           <Plus className="w-4 h-4" aria-hidden="true" />
-          Add User
+          {t.users.addUser}
         </button>
       </header>
 
       {/* Filter Toolbar */}
-      <div className="px-6 py-3.5 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between gap-4 shrink-0">
-        <div className="relative w-80">
+      <div className="px-4 md:px-6 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+        <div className="relative w-full sm:w-80">
           <Search
-            className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+            className="w-4 h-4 text-slate-400 absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none"
             aria-hidden="true"
           />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search users by name or email"
-            placeholder="Search by name or email..."
-            className="w-full h-9 pl-9 pr-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
+            aria-label={t.users.searchAria}
+            placeholder={t.users.searchPlaceholder}
+            className="w-full min-h-[40px] ps-9 pe-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
           />
         </div>
 
-        <div className="inline-flex items-center gap-1 p-1 bg-slate-200/70 rounded-lg">
-          {(['all', 'active', 'inactive'] as const).map((tab) => (
+        <div className="inline-flex items-center gap-1 p-1 bg-slate-200/70 rounded-lg self-start sm:self-auto">
+          {filterTabs.map((tab) => (
             <button
-              key={tab}
+              key={tab.id}
               type="button"
-              onClick={() => setStatusFilter(tab)}
-              className={`h-7 px-3 rounded-md text-xs font-semibold capitalize transition-colors whitespace-nowrap ${
-                statusFilter === tab
+              onClick={() => setStatusFilter(tab.id)}
+              className={`min-h-[32px] px-3 rounded-md text-xs font-semibold transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap ${
+                statusFilter === tab.id
                   ? 'bg-white text-slate-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-950'
               }`}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </div>
       </div>
 
       {/* Feedback & Main List */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-6 space-y-4">
         {loadError && (
           <div role="alert" className="p-4 rounded-lg border border-red-200 bg-red-50 text-sm text-red-800">
-            Could not load users: {formatActionError(loadError, 'Unable to fetch user list.')}
+            {t.users.loadError} {formatActionError(loadError, 'Unable to fetch user list.')}
           </div>
         )}
 
         {actionError && (
-          <div role="alert" className="p-3.5 rounded-lg border border-red-200 bg-red-50 text-xs text-red-800 flex items-center justify-between gap-3">
+          <div role="alert" className="toast-enter p-3.5 rounded-lg border border-red-200 bg-red-50 text-xs text-red-800 flex items-center justify-between gap-3">
             <span>{actionError}</span>
             <button
               type="button"
               onClick={() => setActionError(null)}
-              aria-label="Dismiss error"
-              className="text-red-700 hover:text-red-950 font-semibold"
+              aria-label={t.users.dismissErrorAria}
+              className="text-red-700 hover:text-red-950 font-semibold shrink-0"
             >
-              Dismiss
+              {t.common.dismiss}
             </button>
           </div>
         )}
@@ -440,7 +487,7 @@ export function UsersView({
         {actionNotice && (
           <div
             role="status"
-            className="p-3.5 rounded-lg border border-emerald-200 bg-emerald-50 text-xs text-emerald-900 flex items-center justify-between gap-3"
+            className="toast-enter p-3.5 rounded-lg border border-emerald-200 bg-emerald-50 text-xs text-emerald-900 flex items-center justify-between gap-3"
           >
             <span className="inline-flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
@@ -449,17 +496,17 @@ export function UsersView({
             <button
               type="button"
               onClick={() => setActionNotice(null)}
-              aria-label="Dismiss notice"
-              className="text-emerald-800 hover:text-emerald-950 font-semibold"
+              aria-label={t.users.dismissNoticeAria}
+              className="text-emerald-800 hover:text-emerald-950 font-semibold shrink-0"
             >
-              Dismiss
+              {t.common.dismiss}
             </button>
           </div>
         )}
 
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           {isLoading ? (
-            <div className="divide-y divide-slate-200" aria-label="Loading users">
+            <div className="divide-y divide-slate-200" aria-label={t.users.loadingAria}>
               {Array.from({ length: 3 }).map((_, idx) => (
                 <div key={idx} className="px-5 py-4 flex items-center justify-between gap-4">
                   <div className="space-y-2 flex-1">
@@ -476,12 +523,10 @@ export function UsersView({
                 <Users className="w-5 h-5" aria-hidden="true" />
               </div>
               <p className="text-sm font-semibold text-slate-900">
-                {users.length === 0 ? 'No users configured yet' : 'No matching users'}
+                {users.length === 0 ? t.users.emptyTitle : t.users.noMatchTitle}
               </p>
               <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-                {users.length === 0
-                  ? 'Add an authorized Google account to grant access to the shop.'
-                  : 'Try clearing the search query or switching the status filter.'}
+                {users.length === 0 ? t.users.emptyHint : t.users.noMatchHint}
               </p>
               {users.length === 0 ? (
                 <button
@@ -489,7 +534,7 @@ export function UsersView({
                   onClick={() => setAddModalOpen(true)}
                   className="mt-4 h-9 px-4 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800"
                 >
-                  Add first user
+                  {t.users.addFirstUser}
                 </button>
               ) : (
                 <button
@@ -500,156 +545,301 @@ export function UsersView({
                   }}
                   className="mt-4 h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  Reset filters
+                  {t.users.resetFilters}
                 </button>
               )}
             </div>
           ) : (
-            <table className="w-full border-collapse text-left">
-              <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
-                <tr>
-                  <th scope="col" className="py-3 px-5">
-                    User
-                  </th>
-                  <th scope="col" className="py-3 px-4 w-40">
-                    Role
-                  </th>
-                  <th scope="col" className="py-3 px-4 w-32">
-                    Status
-                  </th>
-                  <th scope="col" className="py-3 px-4 w-36">
-                    Added
-                  </th>
-                  <th scope="col" className="py-3 px-5 text-right w-40">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-sm">
+            <>
+              {/* Desktop Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full border-collapse text-start">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
+                    <tr>
+                      <th scope="col" className="py-3 px-5">
+                        {t.users.colUser}
+                      </th>
+                      <th scope="col" className="py-3 px-4 w-40">
+                        {t.users.colRole}
+                      </th>
+                      <th scope="col" className="py-3 px-4 w-32">
+                        {t.users.colStatus}
+                      </th>
+                      <th scope="col" className="py-3 px-4 w-36">
+                        {t.users.colAdded}
+                      </th>
+                      <th scope="col" className="py-3 px-5 text-end w-40">
+                        {t.users.colActions}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {filteredUsers.map((userRow) => {
+                      const isSelf = normalizeEmail(userRow.email) === normalizedSelf;
+                      const canOwnerGuard = canModifyUserRole(
+                        userRow,
+                        'owner',
+                        currentUserEmail,
+                        users,
+                        lang
+                      );
+                      const canCashierGuard = canModifyUserRole(
+                        userRow,
+                        'cashier',
+                        currentUserEmail,
+                        users,
+                        lang
+                      );
+                      const deactivateGuard = canToggleUserActive(
+                        userRow,
+                        false,
+                        currentUserEmail,
+                        users,
+                        lang
+                      );
+                      const isRowBusy = busyEmail === userRow.email;
+                      const disableRoleSelect =
+                        isRowBusy ||
+                        isSelf ||
+                        (userRow.role === 'admin' && !canOwnerGuard.allowed && !canCashierGuard.allowed);
+                      const roleLockReason = isSelf
+                        ? t.users.cannotChangeOwnRole
+                        : canOwnerGuard.reason ?? canCashierGuard.reason;
+                      const disableDeactivate = userRow.active && (isRowBusy || !deactivateGuard.allowed);
+
+                      return (
+                        <tr
+                          key={userRow.email}
+                          className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/70 transition-colors"
+                        >
+                          <td className="py-3.5 px-5 align-middle">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="font-semibold text-slate-950 truncate">
+                                    {userRow.displayName || userRow.email}
+                                  </p>
+                                  {isSelf && (
+                                    <span className="text-xs font-medium text-blue-700">
+                                      {t.users.youBadge}
+                                    </span>
+                                  )}
+                                </div>
+                                <p
+                                  dir="ltr"
+                                  className="ltr-isolate text-xs font-mono text-slate-500 truncate mt-0.5 text-start"
+                                >
+                                  {userRow.email}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4 align-middle">
+                            <select
+                              aria-label={interpolate(t.users.roleForAria, {
+                                email: userRow.email,
+                              })}
+                              value={userRow.role}
+                              disabled={disableRoleSelect}
+                              title={disableRoleSelect && roleLockReason ? roleLockReason : undefined}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                if (isValidUserRole(next)) {
+                                  handleRoleSelectChange(userRow, next);
+                                }
+                              }}
+                              className="h-9 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed focus:outline-none focus:border-blue-600"
+                            >
+                              <option value="admin">{t.roles.admin}</option>
+                              <option value="owner" disabled={!canOwnerGuard.allowed}>
+                                {t.roles.owner}
+                              </option>
+                              <option value="cashier" disabled={!canCashierGuard.allowed}>
+                                {t.roles.cashier}
+                              </option>
+                            </select>
+                          </td>
+
+                          <td className="py-3.5 px-4 align-middle">
+                            {userRow.active ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                                <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                                {t.users.active}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                                <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
+                                {t.users.inactive}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-4 align-middle text-xs text-slate-500 tabular-nums">
+                            <span dir="ltr" className="ltr-isolate">
+                              {formatUserDate(userRow.createdAt, lang)}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-5 align-middle text-end">
+                            {userRow.active ? (
+                              <button
+                                key="deactivate"
+                                type="button"
+                                disabled={disableDeactivate}
+                                title={
+                                  disableDeactivate && deactivateGuard.reason
+                                    ? deactivateGuard.reason
+                                    : t.users.revokeAccessTitle
+                                }
+                                onClick={() => handleActiveToggleClick(userRow)}
+                                className="h-8 px-3 rounded-lg border border-red-200 bg-white text-xs font-semibold text-red-700 hover:bg-red-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
+                              >
+                                <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
+                                {t.users.deactivate}
+                              </button>
+                            ) : (
+                              <button
+                                key="reactivate"
+                                type="button"
+                                disabled={isRowBusy}
+                                onClick={() => handleActiveToggleClick(userRow)}
+                                className="h-8 px-3 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                                {t.users.reactivate}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Stacked Cards */}
+              <div className="md:hidden divide-y divide-slate-100">
                 {filteredUsers.map((userRow) => {
                   const isSelf = normalizeEmail(userRow.email) === normalizedSelf;
-                  const roleGuardOwner = canModifyUserRole(
+                  const canOwnerGuard = canModifyUserRole(
                     userRow,
                     'owner',
                     currentUserEmail,
-                    users
+                    users,
+                    lang
+                  );
+                  const canCashierGuard = canModifyUserRole(
+                    userRow,
+                    'cashier',
+                    currentUserEmail,
+                    users,
+                    lang
                   );
                   const deactivateGuard = canToggleUserActive(
                     userRow,
                     false,
                     currentUserEmail,
-                    users
+                    users,
+                    lang
                   );
                   const isRowBusy = busyEmail === userRow.email;
                   const disableRoleSelect =
-                    isRowBusy || (userRow.role === 'admin' && !roleGuardOwner.allowed);
+                    isRowBusy ||
+                    isSelf ||
+                    (userRow.role === 'admin' && !canOwnerGuard.allowed && !canCashierGuard.allowed);
                   const disableDeactivate = userRow.active && (isRowBusy || !deactivateGuard.allowed);
 
                   return (
-                    <tr key={userRow.email} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="py-3.5 px-5 align-middle">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="font-semibold text-slate-950 truncate">
-                                {userRow.displayName || userRow.email}
-                              </p>
-                              {isSelf && (
-                                <span className="text-xs font-medium text-blue-700">
-                                  · You
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs font-mono text-slate-500 truncate mt-0.5">
-                              {userRow.email}
+                    <div key={`mobile-${userRow.email}`} className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-950 truncate">
+                              {userRow.displayName || userRow.email}
                             </p>
+                            {isSelf && (
+                              <span className="text-xs font-medium text-blue-700 shrink-0">
+                                {t.users.youBadge}
+                              </span>
+                            )}
                           </div>
+                          <p
+                            dir="ltr"
+                            className="ltr-isolate text-xs font-mono text-slate-500 truncate mt-0.5 text-start"
+                          >
+                            {userRow.email}
+                          </p>
                         </div>
-                      </td>
 
-                      <td className="py-3.5 px-4 align-middle">
-                        <select
-                          aria-label={`Role for ${userRow.email}`}
-                          value={userRow.role}
-                          disabled={disableRoleSelect}
-                          title={
-                            disableRoleSelect && roleGuardOwner.reason
-                              ? roleGuardOwner.reason
-                              : undefined
-                          }
-                          onChange={(e) =>
-                            handleRoleSelectChange(
-                              userRow,
-                              e.target.value === 'admin' ? 'admin' : 'owner'
-                            )
-                          }
-                          className="h-9 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed focus:outline-none focus:border-blue-600"
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="owner">Owner</option>
-                        </select>
-                      </td>
-
-                      <td className="py-3.5 px-4 align-middle">
                         {userRow.active ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 shrink-0">
                             <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                            Active
+                            {t.users.active}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 shrink-0">
                             <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
-                            Inactive
+                            {t.users.inactive}
                           </span>
                         )}
-                      </td>
+                      </div>
 
-                      <td className="py-3.5 px-4 align-middle text-xs text-slate-500 tabular-nums">
-                        {formatUserDate(userRow.createdAt)}
-                      </td>
+                      <div className="flex items-center justify-between gap-2.5">
+                        <select
+                          aria-label={interpolate(t.users.mobileRoleForAria, {
+                            email: userRow.email,
+                          })}
+                          value={userRow.role}
+                          disabled={disableRoleSelect}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            if (isValidUserRole(next)) {
+                              handleRoleSelectChange(userRow, next);
+                            }
+                          }}
+                          className="flex-1 min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed focus:outline-none focus:border-blue-600"
+                        >
+                          <option value="admin">{t.roles.admin}</option>
+                          <option value="owner" disabled={!canOwnerGuard.allowed}>
+                            {t.roles.owner}
+                          </option>
+                          <option value="cashier" disabled={!canCashierGuard.allowed}>
+                            {t.roles.cashier}
+                          </option>
+                        </select>
 
-                      <td className="py-3.5 px-5 align-middle text-right">
                         {userRow.active ? (
                           <button
-                            key="deactivate"
                             type="button"
                             disabled={disableDeactivate}
-                            title={
-                              disableDeactivate && deactivateGuard.reason
-                                ? deactivateGuard.reason
-                                : 'Revoke store access for this user'
-                            }
                             onClick={() => handleActiveToggleClick(userRow)}
-                            className="h-8 px-3 rounded-lg border border-red-200 bg-white text-xs font-semibold text-red-700 hover:bg-red-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                            className="min-h-[40px] px-3.5 rounded-lg border border-red-200 bg-white text-xs font-semibold text-red-700 hover:bg-red-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                           >
                             <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
-                            Deactivate
+                            {t.users.deactivate}
                           </button>
                         ) : (
                           <button
-                            key="reactivate"
                             type="button"
                             disabled={isRowBusy}
                             onClick={() => handleActiveToggleClick(userRow)}
-                            className="h-8 px-3 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                            className="min-h-[40px] px-3.5 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                           >
                             <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                            Reactivate
+                            {t.users.reactivate}
                           </button>
                         )}
-                      </td>
-                    </tr>
+                      </div>
+                    </div>
                   );
                 })}
-              </tbody>
-            </table>
+              </div>
+            </>
           )}
         </div>
 
-        <p className="text-xs text-slate-500">
-          Both Admin and Owner roles can use Products, Sell, Stock, Reports, and Backup CSV exports.
-          Only Admins can manage users. Self-demotion and deactivating the last active admin are blocked.
-        </p>
+        <p className="text-xs text-slate-500">{t.users.footerNote}</p>
       </div>
 
       {addModalOpen && (
@@ -664,16 +854,33 @@ export function UsersView({
         open={pendingConfirm !== null}
         title={
           pendingConfirm?.type === 'deactivate'
-            ? 'Deactivate user account?'
-            : 'Change admin role to owner?'
+            ? t.users.deactivateTitle
+            : interpolate(t.users.changeRoleTitle, {
+                role: pendingConfirm ? roleLabel(pendingConfirm.nextRole) : '',
+              })
         }
         description={
           pendingConfirm?.type === 'deactivate'
-            ? `${pendingConfirm.user.displayName || pendingConfirm.user.email} (${pendingConfirm.user.email}) will immediately lose access to the store and see an access denied screen.`
-            : `${pendingConfirm?.user.displayName || pendingConfirm?.user.email} (${pendingConfirm?.user.email}) will still be able to use all store features, but will no longer be able to open the Users page or manage accounts.`
+            ? interpolate(t.users.deactivateDesc, {
+                name: pendingConfirm.user.displayName || pendingConfirm.user.email,
+                email: pendingConfirm.user.email,
+              })
+            : pendingConfirm?.nextRole === 'cashier'
+              ? interpolate(t.users.demoteCashierDesc, {
+                  name: pendingConfirm.user.displayName || pendingConfirm.user.email,
+                  email: pendingConfirm.user.email,
+                })
+              : interpolate(t.users.demoteOwnerDesc, {
+                  name: pendingConfirm?.user.displayName || pendingConfirm?.user.email || '',
+                  email: pendingConfirm?.user.email || '',
+                })
         }
         confirmLabel={
-          pendingConfirm?.type === 'deactivate' ? 'Deactivate user' : 'Change to Owner'
+          pendingConfirm?.type === 'deactivate'
+            ? t.users.deactivateConfirm
+            : interpolate(t.users.changeRoleConfirm, {
+                role: pendingConfirm ? roleLabel(pendingConfirm.nextRole) : '',
+              })
         }
         tone={pendingConfirm?.type === 'deactivate' ? 'danger' : 'warning'}
         isBusy={busyEmail !== null}

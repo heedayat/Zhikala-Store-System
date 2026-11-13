@@ -1,4 +1,38 @@
-import type { CartLineItem, Product, Sale, SaleLineItem } from '../types/inventory';
+import type {
+  CartLineItem,
+  PaymentMethod,
+  Product,
+  Sale,
+  SaleLineItem,
+} from '../types/inventory';
+
+export const PAYMENT_METHOD_OPTIONS: {
+  value: PaymentMethod;
+  label: string;
+  isDigital: boolean;
+}[] = [
+  { value: 'cash', label: 'Cash', isDigital: false },
+  { value: 'fib', label: 'FIB', isDigital: true },
+  { value: 'card', label: 'FastPay / Card', isDigital: true },
+];
+
+export function normalizePaymentMethod(raw: unknown): PaymentMethod {
+  if (raw === 'fib') return 'fib';
+  if (raw === 'card') return 'card';
+  return 'cash';
+}
+
+export function getPaymentMethodLabel(method: PaymentMethod | string | undefined | null): string {
+  const normalized = normalizePaymentMethod(method);
+  if (normalized === 'fib') return 'FIB';
+  if (normalized === 'card') return 'FastPay / Card';
+  return 'Cash';
+}
+
+export function isDigitalPaymentMethod(method: PaymentMethod | string | undefined | null): boolean {
+  const normalized = normalizePaymentMethod(method);
+  return normalized === 'fib' || normalized === 'card';
+}
 
 export function addProductToCart(
   cart: CartLineItem[],
@@ -12,7 +46,7 @@ export function addProductToCart(
             ...item,
             productName: product.name,
             barcode: product.barcode,
-            variantLabel: product.variantLabel,
+            variantLabel: product.variantLabel ?? '',
             photo: product.photos?.[0] ?? '',
             availableStock: product.quantityInStock,
             quantity: item.quantity + 1,
@@ -27,7 +61,7 @@ export function addProductToCart(
       productId: product.id,
       productName: product.name,
       barcode: product.barcode,
-      variantLabel: product.variantLabel,
+      variantLabel: product.variantLabel ?? '',
       photo: product.photos?.[0] ?? '',
       quantity: 1,
       listPrice: product.sellingPrice,
@@ -72,7 +106,7 @@ export function updateCartItemUnitPrice(
   if (!Number.isFinite(nextUnitPrice) || nextUnitPrice < 0) {
     return cart;
   }
-  const cleanPrice = Math.round(nextUnitPrice);
+  const cleanPrice = Math.round(nextUnitPrice * 100) / 100;
   return cart.map((item) =>
     item.productId === productId ? { ...item, unitPrice: cleanPrice } : item
   );
@@ -133,8 +167,8 @@ export function computeCartSummary(
   }
 
   return {
-    totalAmount,
-    totalCost,
+    totalAmount: Math.round(totalAmount * 100) / 100,
+    totalCost: Math.round(totalCost * 100) / 100,
     itemCount,
     belowCostCount,
     exceedingStockCount,
@@ -150,7 +184,7 @@ export function buildSaleLineItems(
     const live = productMap.get(line.productId);
     const listPrice = live ? live.sellingPrice : line.listPrice;
     const costPrice = live ? live.costPrice : line.costPrice;
-    const unitPrice = Math.max(0, Math.round(line.unitPrice));
+    const unitPrice = Math.max(0, Math.round(line.unitPrice * 100) / 100);
     return {
       productId: line.productId,
       productName: live ? live.name : line.productName,
@@ -159,7 +193,7 @@ export function buildSaleLineItems(
       listPrice,
       unitPrice,
       costPrice,
-      lineTotal: line.quantity * unitPrice,
+      lineTotal: Math.round(line.quantity * unitPrice * 100) / 100,
     };
   });
 }
@@ -183,6 +217,10 @@ export interface DailyReconciliation {
   todayTotal: number;
   todaySalesCount: number;
   todayVoidedCount: number;
+  todayCashTotal: number;
+  todayDigitalTotal: number;
+  todayCashCount: number;
+  todayDigitalCount: number;
   notedSalesToday: Sale[];
 }
 
@@ -193,6 +231,10 @@ export function computeDailyReconciliation(
   let todayTotal = 0;
   let todaySalesCount = 0;
   let todayVoidedCount = 0;
+  let todayCashTotal = 0;
+  let todayDigitalTotal = 0;
+  let todayCashCount = 0;
+  let todayDigitalCount = 0;
   const notedSalesToday: Sale[] = [];
 
   for (const sale of sales) {
@@ -205,6 +247,13 @@ export function computeDailyReconciliation(
     }
     todaySalesCount += 1;
     todayTotal += sale.totalAmount;
+    if (isDigitalPaymentMethod(sale.paymentMethod)) {
+      todayDigitalTotal += sale.totalAmount;
+      todayDigitalCount += 1;
+    } else {
+      todayCashTotal += sale.totalAmount;
+      todayCashCount += 1;
+    }
     if ((sale.note ?? '').trim().length > 0) {
       notedSalesToday.push(sale);
     }
@@ -213,9 +262,13 @@ export function computeDailyReconciliation(
   notedSalesToday.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   return {
-    todayTotal,
+    todayTotal: Math.round(todayTotal * 100) / 100,
     todaySalesCount,
     todayVoidedCount,
+    todayCashTotal: Math.round(todayCashTotal * 100) / 100,
+    todayDigitalTotal: Math.round(todayDigitalTotal * 100) / 100,
+    todayCashCount,
+    todayDigitalCount,
     notedSalesToday,
   };
 }
@@ -240,7 +293,13 @@ export function filterSales(
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
-export function formatSaleDateTime(date: Date): string {
+export function formatSaleDateTime(date: Date, lang: 'en' | 'ku' = 'en'): string {
+  if (lang === 'ku') {
+    const ymd = formatLocalYmd(date);
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${ymd} ${hh}:${mm}`;
+  }
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
@@ -250,7 +309,12 @@ export function formatSaleDateTime(date: Date): string {
   }).format(date);
 }
 
-export function formatSaleTime(date: Date): string {
+export function formatSaleTime(date: Date, lang: 'en' | 'ku' = 'en'): string {
+  if (lang === 'ku') {
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
   return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
     minute: '2-digit',

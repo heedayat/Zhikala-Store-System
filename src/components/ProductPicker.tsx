@@ -1,7 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Package, Search, X } from 'lucide-react';
+import { useTranslation } from '../contexts/I18nContext';
 import type { Product } from '../types/inventory';
-import { findProductByBarcode, formatCurrency, formatNumber } from '../utils/formatters';
+import { findProductByBarcode, formatNumber } from '../utils/formatters';
+import { interpolate } from '../utils/i18n';
 
 interface ProductPickerProps {
   products: Product[];
@@ -20,6 +22,7 @@ export function ProductPicker({
   currency,
   error,
 }: ProductPickerProps) {
+  const { t, formatCurrencyLocalized } = useTranslation();
   const inputId = useId();
   const listboxId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -87,7 +90,7 @@ export function ProductPicker({
       return;
     }
 
-    setScanError(`No active product matched "${raw}".`);
+    setScanError(interpolate(t.stock.noActiveMatch, { query: raw }));
     setIsOpen(true);
   }
 
@@ -95,7 +98,7 @@ export function ProductPicker({
     return (
       <div>
         <span className="block text-xs font-semibold text-slate-700 mb-1.5">
-          Product <span className="text-red-600">*</span>
+          {t.stock.productLabel} <span className="text-red-600">*</span>
         </span>
         <div className="h-10 px-3 rounded-lg border border-slate-300 bg-slate-50 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -107,11 +110,18 @@ export function ProductPicker({
                 · {selectedProduct.variantLabel}
               </span>
             )}
-            <span className="text-xs text-slate-500 font-mono tabular-nums shrink-0">
-              · {formatNumber(selectedProduct.quantityInStock)} in stock
+            <span className="text-xs text-slate-500 shrink-0">
+              ·{' '}
+              <span dir="ltr" className="ltr-isolate font-mono tabular-nums">
+                {formatNumber(selectedProduct.quantityInStock)}
+              </span>{' '}
+              {t.common.inStock}
             </span>
-            <span className="text-xs text-slate-500 font-mono tabular-nums shrink-0">
-              · Cost {formatCurrency(selectedProduct.costPrice, currency)}
+            <span className="text-xs text-slate-500 shrink-0">
+              · {t.stock.costPrefix}{' '}
+              <span dir="ltr" className="ltr-isolate font-mono tabular-nums">
+                {formatCurrencyLocalized(selectedProduct.costPrice, currency)}
+              </span>
             </span>
           </div>
           <button
@@ -121,11 +131,11 @@ export function ProductPicker({
               setScanError(null);
               setTimeout(() => inputRef.current?.focus(), 0);
             }}
-            aria-label="Change selected product"
+            aria-label={t.stock.changeProductAria}
             className="h-7 px-2 rounded-md text-xs font-medium text-slate-600 hover:text-slate-950 hover:bg-slate-200/70 inline-flex items-center gap-1 shrink-0"
           >
             <X className="w-3.5 h-3.5" aria-hidden="true" />
-            Change
+            {t.stock.changeBtn}
           </button>
         </div>
         {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
@@ -136,11 +146,11 @@ export function ProductPicker({
   return (
     <div ref={containerRef} className="relative">
       <label htmlFor={inputId} className="block text-xs font-semibold text-slate-700 mb-1.5">
-        Product <span className="text-red-600">*</span>
+        {t.stock.productLabel} <span className="text-red-600">*</span>
       </label>
       <div className="relative">
         <Search
-          className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+          className="w-4 h-4 text-slate-400 absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none"
           aria-hidden="true"
         />
         <input
@@ -159,8 +169,8 @@ export function ProductPicker({
             setIsOpen(true);
           }}
           onKeyDown={handleKeyDown}
-          placeholder="Search product name or scan barcode + Enter..."
-          className={`w-full h-10 pl-9 pr-3 rounded-lg border bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
+          placeholder={t.stock.pickerPlaceholder}
+          className={`w-full h-10 ps-9 pe-3 rounded-lg border bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
             error || scanError
               ? 'border-red-400 focus:border-red-600 focus:ring-red-500/15'
               : 'border-slate-300 focus:border-blue-600 focus:ring-blue-600/15'
@@ -176,7 +186,7 @@ export function ProductPicker({
         >
           {matches.length === 0 ? (
             <div className="px-3 py-4 text-xs text-slate-500 text-center">
-              No active products match &ldquo;{query.trim()}&rdquo;.
+              {interpolate(t.stock.noMatchingProducts, { query: query.trim() })}
             </div>
           ) : (
             matches.map((product) => (
@@ -186,7 +196,7 @@ export function ProductPicker({
                 role="option"
                 aria-selected={false}
                 onClick={() => handleSelectProduct(product)}
-                className="w-full px-3 py-2 text-left hover:bg-slate-50 transition-colors flex items-center justify-between gap-3"
+                className="w-full px-3 py-2 text-start hover:bg-slate-50 transition-colors flex items-center justify-between gap-3"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded border border-slate-200 bg-slate-100 overflow-hidden flex items-center justify-center shrink-0">
@@ -205,16 +215,21 @@ export function ProductPicker({
                     <p className="text-sm font-medium text-slate-900 truncate">{product.name}</p>
                     <p className="text-xs text-slate-500 truncate">
                       {product.barcode ? (
-                        <span className="font-mono">{product.barcode}</span>
+                        <span dir="ltr" className="ltr-isolate font-mono">
+                          {product.barcode}
+                        </span>
                       ) : (
-                        'No barcode'
+                        t.common.noBarcode
                       )}
                       {product.variantLabel ? ` · ${product.variantLabel}` : ''}
                     </p>
                   </div>
                 </div>
-                <span className="font-mono text-xs font-semibold text-slate-700 tabular-nums shrink-0">
-                  {formatNumber(product.quantityInStock)} in stock
+                <span className="text-xs font-semibold text-slate-700 shrink-0">
+                  <span dir="ltr" className="ltr-isolate font-mono tabular-nums">
+                    {formatNumber(product.quantityInStock)}
+                  </span>{' '}
+                  {t.common.inStock}
                 </span>
               </button>
             ))

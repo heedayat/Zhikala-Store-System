@@ -1,9 +1,13 @@
-export type UserRole = 'admin' | 'owner';
-
 export type NavSection = 'products' | 'sell' | 'stock' | 'reports' | 'users';
 
+export type UserRole = 'admin' | 'owner' | 'cashier';
+
+export type SupportedCurrency = 'IQD' | 'USD';
+
+export type PaymentMethod = 'cash' | 'fib' | 'card';
+
 export interface AppUser {
-  email: string;
+  email: string; // normalized lowercase email (Firestore doc ID)
   displayName: string;
   role: UserRole;
   active: boolean;
@@ -48,34 +52,24 @@ export interface ProductFormValues {
   notes: string;
 }
 
-export interface ShopSettings {
-  ownerId: string;
-  shopName: string;
-  currency: string;
-  weekStartDay?: number;
-}
-
 export type StockMovementType = 'add' | 'remove' | 'sale' | 'void';
 
-export const ADD_STOCK_REASONS = [
+export type AddStockReason = 'New stock arrived' | 'Customer return' | 'Correction';
+export type RemoveStockReason = 'Damaged' | 'Lost' | 'Correction' | 'Other';
+export type StockMovementReason = AddStockReason | RemoveStockReason | 'Sale' | 'Sale voided';
+
+export const ADD_STOCK_REASONS: AddStockReason[] = [
   'New stock arrived',
   'Customer return',
   'Correction',
-] as const;
+];
 
-export const REMOVE_STOCK_REASONS = [
+export const REMOVE_STOCK_REASONS: RemoveStockReason[] = [
   'Damaged',
   'Lost',
   'Correction',
   'Other',
-] as const;
-
-export const SALE_STOCK_REASONS = ['Sale', 'Sale voided'] as const;
-
-export type AddStockReason = (typeof ADD_STOCK_REASONS)[number];
-export type RemoveStockReason = (typeof REMOVE_STOCK_REASONS)[number];
-export type SaleStockReason = (typeof SALE_STOCK_REASONS)[number];
-export type StockMovementReason = AddStockReason | RemoveStockReason | SaleStockReason;
+];
 
 export interface StockMovement {
   id: string;
@@ -106,8 +100,8 @@ export interface CartLineItem {
   productId: string;
   productName: string;
   barcode: string;
-  variantLabel?: string;
-  photo?: string;
+  photo: string;
+  variantLabel: string;
   quantity: number;
   listPrice: number;
   unitPrice: number;
@@ -124,10 +118,22 @@ export interface Sale {
   totalAmount: number;
   totalCost: number;
   itemCount: number;
-  paymentMethod: 'cash';
+  paymentMethod: PaymentMethod;
   note?: string;
   status: SaleStatus;
   createdAt: Date;
   updatedAt?: Date | null;
   voidedAt?: Date | null;
+}
+
+export interface ShopSettings {
+  ownerId: string;
+  shopName: string;
+  storeSubtitle?: string;
+  receiptFooter?: string;
+  logoUrl?: string;
+  currency: string;
+  weekStartDay?: number;
+  createdAt?: Date | null;
+  updatedAt?: Date | null;
 }

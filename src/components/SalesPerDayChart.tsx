@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { formatCurrency, formatNumber } from '../utils/formatters';
+import { useTranslation } from '../contexts/I18nContext';
+import { formatNumber } from '../utils/formatters';
+import { interpolate } from '../utils/i18n';
 import type { DailySalesPoint, ReportPeriodType } from '../utils/reports';
 
 interface SalesPerDayChartProps {
@@ -8,8 +10,8 @@ interface SalesPerDayChartProps {
   currency: string;
 }
 
-function computeNiceAxisMax(rawMax: number): number {
-  if (rawMax <= 0) return 10000;
+function computeNiceAxisMax(rawMax: number, currency: string): number {
+  if (rawMax <= 0) return currency === 'USD' ? 100 : 10000;
   const magnitude = Math.pow(10, Math.floor(Math.log10(rawMax)));
   const normalized = rawMax / magnitude;
   let step = 10;
@@ -30,10 +32,11 @@ export function SalesPerDayChart({
   periodType,
   currency,
 }: SalesPerDayChartProps) {
+  const { t, formatCurrencyLocalized } = useTranslation();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const rawMax = series.reduce((max, d) => Math.max(max, d.totalSales), 0);
-  const axisMax = computeNiceAxisMax(rawMax);
+  const axisMax = computeNiceAxisMax(rawMax, currency);
   const activeDaysCount = series.filter((d) => d.totalSales > 0).length;
   const peakDay = series.reduce<DailySalesPoint | null>(
     (best, d) => (!best || d.totalSales > best.totalSales ? d : best),
@@ -60,49 +63,80 @@ export function SalesPerDayChart({
 
   const yTicks = [0, 0.5, 1];
 
+  const getSaleWord = (count: number) =>
+    count === 1 ? t.common.saleSingular : t.common.salePlural;
+
   return (
     <div
       data-testid="sales-per-day-chart"
-      className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between h-full print-break-avoid"
+      className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between h-full overflow-hidden print-break-avoid text-start"
     >
-      <div className="flex items-start justify-between gap-4 mb-3">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-4 mb-3">
         <div>
-          <h2 className="text-sm font-bold text-slate-950">Sales per Day</h2>
+          <h2 className="text-sm font-bold text-slate-950">{t.reports.salesPerDay}</h2>
           <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
-            {activeDaysCount} active selling day{activeDaysCount === 1 ? '' : 's'} in this period
+            {interpolate(t.reports.activeSellingDays, {
+              count: formatNumber(activeDaysCount),
+            })}
           </p>
         </div>
 
-        <div className="text-right min-h-[34px]">
+        <div className="sm:text-end min-h-[34px]">
           {hovered ? (
             <div className="text-xs tabular-nums">
               <p className="font-semibold text-slate-950">{hovered.fullDateLabel}</p>
-              <p className="text-slate-600 font-mono mt-0.5">
-                {formatCurrency(hovered.totalSales, currency)} · Profit{' '}
-                {formatCurrency(hovered.grossProfit, currency)} · {formatNumber(hovered.salesCount)}{' '}
-                sale{hovered.salesCount === 1 ? '' : 's'}
+              <p className="text-slate-600 mt-0.5 flex flex-wrap sm:justify-end items-center gap-1.5">
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatCurrencyLocalized(hovered.totalSales, currency)}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {t.reports.profitPrefix}{' '}
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatCurrencyLocalized(hovered.grossProfit, currency)}
+                  </span>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(hovered.salesCount)}
+                  </span>{' '}
+                  {getSaleWord(hovered.salesCount)}
+                </span>
               </p>
             </div>
           ) : peakDay && peakDay.totalSales > 0 ? (
             <div className="text-xs tabular-nums">
-              <p className="text-slate-500">Peak day: {peakDay.fullDateLabel}</p>
-              <p className="font-mono font-semibold text-slate-950 mt-0.5">
-                {formatCurrency(peakDay.totalSales, currency)} ({formatNumber(peakDay.salesCount)}{' '}
-                sale{peakDay.salesCount === 1 ? '' : 's'})
+              <p className="text-slate-500">
+                {t.reports.peakDay} {peakDay.fullDateLabel}
+              </p>
+              <p className="font-semibold text-slate-950 mt-0.5 flex flex-wrap sm:justify-end items-center gap-1.5">
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatCurrencyLocalized(peakDay.totalSales, currency)}
+                </span>
+                <span>
+                  (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(peakDay.salesCount)}
+                  </span>{' '}
+                  {getSaleWord(peakDay.salesCount)})
+                </span>
               </p>
             </div>
           ) : (
-            <p className="text-xs text-slate-400">No sales recorded in period</p>
+            <p className="text-xs text-slate-400">{t.reports.noSalesInPeriod}</p>
           )}
         </div>
       </div>
 
-      <div className="w-full">
+      <div dir="ltr" className="w-full overflow-hidden">
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           role="img"
-          aria-label={`Bar chart of daily sales for the selected ${periodType} period`}
-          className="w-full h-auto overflow-visible select-none"
+          aria-label={interpolate(t.reports.chartAria, {
+            period: periodType === 'weekly' ? t.reports.weekly : t.reports.monthly,
+          })}
+          className="w-full h-auto select-none"
         >
           {/* Y-axis gridlines and tick labels */}
           {yTicks.map((ratio) => {
@@ -152,7 +186,7 @@ export function SalesPerDayChart({
                 key={point.dateYmd}
                 tabIndex={0}
                 role="button"
-                aria-label={`${point.fullDateLabel}: ${formatCurrency(point.totalSales, currency)}, ${point.salesCount} sales`}
+                aria-label={`${point.fullDateLabel}: ${formatCurrencyLocalized(point.totalSales, currency)}, ${point.salesCount} ${getSaleWord(point.salesCount)}`}
                 onMouseEnter={() => setActiveIndex(idx)}
                 onMouseLeave={() => setActiveIndex(null)}
                 onFocus={() => setActiveIndex(idx)}

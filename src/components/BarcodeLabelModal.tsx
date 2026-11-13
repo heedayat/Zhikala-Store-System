@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Printer, X } from 'lucide-react';
+import { useTranslation } from '../contexts/I18nContext';
 import type { Product } from '../types/inventory';
-import { formatCurrency } from '../utils/formatters';
 import { BarcodeSvg } from './BarcodeSvg';
 
 interface BarcodeLabelModalProps {
@@ -17,6 +17,7 @@ export function BarcodeLabelModal({
   currency,
   onClose,
 }: BarcodeLabelModalProps) {
+  const { t, formatCurrencyLocalized } = useTranslation();
   const [labelSize, setLabelSize] = useState<'standard' | 'large'>('standard');
 
   useEffect(() => {
@@ -34,65 +35,63 @@ export function BarcodeLabelModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="barcode-label-modal-title"
-      className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-6"
+      className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs modal-backdrop-enter flex items-center justify-center p-3 sm:p-6"
     >
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-lg overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
-          <div>
+      <div className="bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-lg max-h-[92vh] overflow-y-auto modal-panel-enter">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
+          <div className="text-start">
             <h2
               id="barcode-label-modal-title"
               className="text-base font-bold text-slate-950"
             >
-              Print Barcode Label
+              {t.barcodeModal.title}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Ready for thermal label printers or standard A4 sheets
-            </p>
+            <p className="text-xs text-slate-500 mt-0.5">{t.barcodeModal.subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close label preview"
-            className="w-8 h-8 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center"
+            aria-label={t.barcodeModal.closeAria}
+            className="w-9 h-9 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center shrink-0"
           >
             <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs font-semibold text-slate-600">Label size</span>
+        <div className="p-4 sm:p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-slate-600">{t.barcodeModal.labelSize}</span>
             <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
               <button
                 type="button"
                 onClick={() => setLabelSize('standard')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                className={`min-h-[34px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                   labelSize === 'standard'
                     ? 'bg-white text-slate-950 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Standard (50×30mm)
+                {t.barcodeModal.standardSize}
               </button>
               <button
                 type="button"
                 onClick={() => setLabelSize('large')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                className={`min-h-[34px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                   labelSize === 'large'
                     ? 'bg-white text-slate-950 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Large (70×40mm)
+                {t.barcodeModal.largeSize}
               </button>
             </div>
           </div>
 
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-8 flex items-center justify-center">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-8 flex items-center justify-center overflow-x-auto">
             <div
               id="printable-barcode-label"
               className={`bg-white border border-slate-300 rounded-md text-center flex flex-col items-center justify-between ${
-                labelSize === 'standard' ? 'w-64 p-4' : 'w-80 p-5'
+                labelSize === 'standard' ? 'w-64 p-4' : 'w-full max-w-80 p-5'
               }`}
             >
               <div className="w-full">
@@ -113,7 +112,7 @@ export function BarcodeLabelModal({
                 ) : null}
               </div>
 
-              <div className="my-3 w-full flex justify-center">
+              <div dir="ltr" className="my-3 w-full flex justify-center">
                 <BarcodeSvg
                   value={product.barcode}
                   height={labelSize === 'standard' ? 46 : 60}
@@ -122,31 +121,32 @@ export function BarcodeLabelModal({
               </div>
 
               <p
-                className={`font-mono font-bold text-slate-950 tabular-nums ${
+                dir="ltr"
+                className={`ltr-isolate font-mono font-bold text-slate-950 tabular-nums ${
                   labelSize === 'standard' ? 'text-sm' : 'text-base'
                 }`}
               >
-                {formatCurrency(product.sellingPrice, currency)}
+                {formatCurrencyLocalized(product.sellingPrice, currency)}
               </p>
             </div>
           </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-3">
+        <div className="px-4 sm:px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap"
+            className="min-h-[40px] px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 active:scale-[0.98] transition-all whitespace-nowrap"
           >
-            Close
+            {t.common.close}
           </button>
           <button
             type="button"
             onClick={() => window.print()}
-            className="h-10 px-5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 transition-colors inline-flex items-center gap-2 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+            className="min-h-[40px] px-5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 active:scale-[0.98] transition-all inline-flex items-center gap-2 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
             <Printer className="w-4 h-4" aria-hidden="true" />
-            Print label
+            {t.barcodeModal.printLabel}
           </button>
         </div>
       </div>

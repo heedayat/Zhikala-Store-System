@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { RefreshCw, ShieldAlert } from 'lucide-react';
 import { auth, googleProvider } from './firebase';
+import { useTranslation } from './contexts/I18nContext';
 import {
   completeSaleTransaction,
   createProduct,
@@ -23,14 +24,17 @@ import {
 import type {
   AppUser,
   NavSection,
+  PaymentMethod,
   Product,
   Sale,
   SaleLineItem,
   ShopSettings,
   StockMovement,
+  SupportedCurrency,
   UserRole,
 } from './types/inventory';
 import { extractUsedCategories, formatActionError } from './utils/formatters';
+import { interpolate } from './utils/i18n';
 import type { ValidatedProductPayload } from './utils/productValidation';
 import type { ValidatedStockAdjustment } from './utils/stockMovements';
 import {
@@ -41,14 +45,18 @@ import {
   PREVIEW_SEED_USERS,
 } from './utils/previewData';
 import { DEFAULT_WEEK_START_DAY, normalizeWeekStartDay } from './utils/reports';
+import { normalizePaymentMethod } from './utils/sales';
 import {
   canModifyUserRole,
   canToggleUserActive,
   isAuthorizedUserRecord,
+  isManagerRole,
+  isValidUserRole,
   normalizeEmail,
   validateNewUserForm,
 } from './utils/users';
 import { LoginScreen } from './components/LoginScreen';
+import { MobileBottomNav, MobileTopHeader } from './components/MobileNav';
 import { Sidebar } from './components/Sidebar';
 import { ProductsView } from './components/ProductsView';
 import { SellView } from './components/SellView';
@@ -57,22 +65,69 @@ import { ReportsView } from './components/ReportsView';
 import { UsersView } from './components/UsersView';
 import { ProductFormModal } from './components/ProductFormModal';
 import { BarcodeLabelModal } from './components/BarcodeLabelModal';
-import { ShopSettingsModal } from './components/ShopSettingsModal';
+import { ShopSettingsModal, type StoreSettingsFormValues } from './components/ShopSettingsModal';
 
 const PREVIEW_STORAGE_KEY = 'toybox_preview_products_v1';
 const PREVIEW_MOVEMENTS_KEY = 'toybox_preview_movements_v1';
 const PREVIEW_SALES_KEY = 'toybox_preview_sales_v1';
 const PREVIEW_SETTINGS_KEY = 'toybox_preview_settings_v1';
 const PREVIEW_USERS_KEY = 'toybox_preview_users_v1';
+const BRANDING_CACHE_KEY = 'toybox_branding_cache_v1';
 
 type AccessState = 'loading' | 'authorized' | 'denied' | 'error';
-type PreviewModeVariant = 'admin' | 'owner' | 'denied';
+type PreviewModeVariant = 'admin' | 'owner' | 'cashier' | 'denied';
 
 interface PrintableLabelTarget {
   name: string;
   barcode: string;
   sellingPrice: number;
   variantLabel?: string;
+}
+
+interface CachedBranding {
+  shopName: string;
+  storeSubtitle: string;
+  logoUrl: string;
+}
+
+function loadCachedBranding(): CachedBranding {
+  try {
+    const raw = localStorage.getItem(BRANDING_CACHE_KEY);
+    if (!raw) {
+      return {
+        shopName: 'Little Wonders',
+        storeSubtitle: 'Counter Inventory & Sales System',
+        logoUrl: '',
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<CachedBranding>;
+    return {
+      shopName: parsed.shopName?.trim() || 'Little Wonders',
+      storeSubtitle: parsed.storeSubtitle?.trim() || 'Counter Inventory & Sales System',
+      logoUrl: typeof parsed.logoUrl === 'string' ? parsed.logoUrl.trim() : '',
+    };
+  } catch {
+    return {
+      shopName: 'Little Wonders',
+      storeSubtitle: 'Counter Inventory & Sales System',
+      logoUrl: '',
+    };
+  }
+}
+
+function saveCachedBranding(shopName: string, storeSubtitle: string, logoUrl: string) {
+  try {
+    localStorage.setItem(
+      BRANDING_CACHE_KEY,
+      JSON.stringify({
+        shopName: shopName.trim(),
+        storeSubtitle: storeSubtitle.trim(),
+        logoUrl: logoUrl.trim(),
+      })
+    );
+  } catch {
+    // Ignore storage failures
+  }
 }
 
 function isAutostartPreview(): boolean {
@@ -84,7 +139,9 @@ function getPreviewModeVariant(): PreviewModeVariant {
   if (typeof window === 'undefined') return 'admin';
   const params = new URLSearchParams(window.location.search);
   if (params.get('access') === 'denied') return 'denied';
-  if (params.get('role') === 'owner') return 'owner';
+  const role = params.get('role');
+  if (role === 'owner') return 'owner';
+  if (role === 'cashier') return 'cashier';
   return 'admin';
 }
 
@@ -144,6 +201,7 @@ function loadPreviewUsers(): AppUser[] {
 }
 
 export default function App() {
+  const { lang, t } = useTranslation();
   const [previewMode] = useState<boolean>(() => isAutostartPreview());
   const [previewVariant] = useState<PreviewModeVariant>(() => getPreviewModeVariant());
   const [authReady, setAuthReady] = useState<boolean>(previewMode);
@@ -168,6 +226,16 @@ export default function App() {
         }
       );
     }
+    if (previewVariant === 'cashier') {
+      return (
+        PREVIEW_SEED_USERS.find((u) => u.role === 'cashier') ?? {
+          email: 'cashier@littlewonders.shop',
+          displayName: 'Noor (Cashier)',
+          role: 'cashier',
+          active: true,
+        }
+      );
+    }
     return (
       PREVIEW_SEED_USERS.find((u) => u.role === 'admin') ?? {
         email: 'gamerhidayatgamer@gmail.com',
@@ -178,7 +246,9 @@ export default function App() {
     );
   });
 
-  const [activeSection, setActiveSection] = useState<NavSection>('products');
+  const [activeSection, setActiveSection] = useState<NavSection>(() =>
+    previewMode && previewVariant === 'cashier' ? 'sell' : 'products'
+  );
   const [products, setProducts] = useState<Product[]>(() => {
     if (!previewMode || previewVariant === 'denied') return [];
     try {
@@ -192,7 +262,9 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [movements, setMovements] = useState<StockMovement[]>(() =>
-    previewMode && previewVariant !== 'denied' ? loadPreviewMovements() : []
+    previewMode && previewVariant !== 'denied' && previewVariant !== 'cashier'
+      ? loadPreviewMovements()
+      : []
   );
   const [isLoadingMovements, setIsLoadingMovements] = useState<boolean>(!previewMode);
   const [movementsLoadError, setMovementsLoadError] = useState<string | null>(null);
@@ -204,11 +276,14 @@ export default function App() {
   const [salesLoadError, setSalesLoadError] = useState<string | null>(null);
 
   const [usersList, setUsersList] = useState<AppUser[]>(() =>
-    previewMode && previewVariant === 'admin' ? loadPreviewUsers() : []
+    previewMode && (previewVariant === 'admin' || previewVariant === 'owner')
+      ? loadPreviewUsers()
+      : []
   );
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(!previewMode);
   const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
 
+  const [cachedBranding, setCachedBranding] = useState<CachedBranding>(() => loadCachedBranding());
   const [shopSettings, setShopSettings] = useState<ShopSettings | null>(() => {
     if (!previewMode || previewVariant === 'denied') return null;
     try {
@@ -228,14 +303,22 @@ export default function App() {
   const [labelTarget, setLabelTarget] = useState<PrintableLabelTarget | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  const effectiveShopName = shopSettings?.shopName || 'Little Wonders';
-  const effectiveCurrency = shopSettings?.currency || 'IQD';
+  const effectiveShopName = shopSettings?.shopName || cachedBranding.shopName || 'Little Wonders';
+  const effectiveStoreSubtitle =
+    shopSettings?.storeSubtitle !== undefined
+      ? shopSettings.storeSubtitle
+      : cachedBranding.storeSubtitle;
+  const effectiveLogoUrl =
+    shopSettings?.logoUrl !== undefined ? shopSettings.logoUrl : cachedBranding.logoUrl;
+  const effectiveReceiptFooter = shopSettings?.receiptFooter ?? '';
+  const effectiveCurrency: SupportedCurrency =
+    shopSettings?.currency === 'USD' ? 'USD' : 'IQD';
   const effectiveWeekStartDay = normalizeWeekStartDay(
     shopSettings?.weekStartDay ?? DEFAULT_WEEK_START_DAY
   );
 
   useEffect(() => {
-    document.title = `${effectiveShopName} Inventory`;
+    document.title = effectiveShopName;
   }, [effectiveShopName]);
 
   // Firebase Auth listener
@@ -305,14 +388,28 @@ export default function App() {
     ? previewVariant !== 'denied'
     : Boolean(user && accessState === 'authorized' && isAuthorizedUserRecord(currentUserRecord));
 
-  const effectiveRole: UserRole = currentUserRecord?.role === 'admin' ? 'admin' : 'owner';
+  const effectiveRole: UserRole =
+    currentUserRecord && isValidUserRole(currentUserRecord.role)
+      ? currentUserRecord.role
+      : 'cashier';
+  const isManager = isManagerRole(effectiveRole);
 
-  // Ensure non-admins never stay on the Users section
+  // Land Cashiers on Sell and keep restricted sections inaccessible to Cashiers
   useEffect(() => {
-    if (activeSection === 'users' && effectiveRole !== 'admin') {
-      setActiveSection('products');
+    if (!isAuthorized) return;
+    if (
+      !isManager &&
+      (activeSection === 'stock' || activeSection === 'reports' || activeSection === 'users')
+    ) {
+      setActiveSection('sell');
     }
-  }, [activeSection, effectiveRole]);
+  }, [activeSection, isAuthorized, isManager]);
+
+  useEffect(() => {
+    if (!previewMode && isAuthorized && effectiveRole === 'cashier') {
+      setActiveSection('sell');
+    }
+  }, [previewMode, isAuthorized, effectiveRole]);
 
   // Shared store collections (attached only after allowlist authorization)
   useEffect(() => {
@@ -329,10 +426,8 @@ export default function App() {
     }
 
     setIsLoadingProducts(true);
-    setIsLoadingMovements(true);
     setIsLoadingSales(true);
     setLoadError(null);
-    setMovementsLoadError(null);
     setSalesLoadError(null);
 
     const unsubProducts = subscribeToProducts(
@@ -346,16 +441,25 @@ export default function App() {
       }
     );
 
-    const unsubMovements = subscribeToStockMovements(
-      (items) => {
-        setMovements(items);
-        setIsLoadingMovements(false);
-      },
-      (err) => {
-        setMovementsLoadError(formatActionError(err, 'Failed to load stock history.'));
-        setIsLoadingMovements(false);
-      }
-    );
+    let unsubMovements: (() => void) | undefined;
+    if (isManager) {
+      setIsLoadingMovements(true);
+      setMovementsLoadError(null);
+      unsubMovements = subscribeToStockMovements(
+        (items) => {
+          setMovements(items);
+          setIsLoadingMovements(false);
+        },
+        (err) => {
+          setMovementsLoadError(formatActionError(err, 'Failed to load stock history.'));
+          setIsLoadingMovements(false);
+        }
+      );
+    } else {
+      setMovements([]);
+      setIsLoadingMovements(false);
+      setMovementsLoadError(null);
+    }
 
     const unsubSales = subscribeToSales(
       (items) => {
@@ -372,6 +476,15 @@ export default function App() {
       user.uid,
       (settings) => {
         setShopSettings(settings);
+        if (settings) {
+          const nextBrand: CachedBranding = {
+            shopName: settings.shopName,
+            storeSubtitle: settings.storeSubtitle ?? '',
+            logoUrl: settings.logoUrl ?? '',
+          };
+          setCachedBranding(nextBrand);
+          saveCachedBranding(nextBrand.shopName, nextBrand.storeSubtitle, nextBrand.logoUrl);
+        }
       },
       () => {
         // Non-fatal if settings doc hasn't been created yet
@@ -380,23 +493,23 @@ export default function App() {
 
     return () => {
       unsubProducts();
-      unsubMovements();
+      unsubMovements?.();
       unsubSales();
       unsubSettings();
     };
-  }, [previewMode, authReady, user, isAuthorized]);
+  }, [previewMode, authReady, user, isAuthorized, isManager]);
 
-  // Users directory subscription (admin only)
+  // Users directory subscription (Admin & Owner)
   useEffect(() => {
     if (previewMode) {
       setIsLoadingUsers(false);
-      if (effectiveRole !== 'admin') {
+      if (!isManager) {
         setUsersList([]);
       }
       return;
     }
 
-    if (!authReady || !user || !isAuthorized || effectiveRole !== 'admin') {
+    if (!authReady || !user || !isAuthorized || !isManager) {
       setUsersList([]);
       setIsLoadingUsers(false);
       setUsersLoadError(null);
@@ -418,7 +531,7 @@ export default function App() {
     );
 
     return () => unsubUsers();
-  }, [previewMode, authReady, user, isAuthorized, effectiveRole]);
+  }, [previewMode, authReady, user, isAuthorized, isManager]);
 
   const usedCategories = useMemo(() => extractUsedCategories(products), [products]);
 
@@ -532,7 +645,7 @@ export default function App() {
       return;
     }
 
-    if (!user) throw new Error('You must be signed in.');
+    if (!user) throw new Error(t.auth.mustBeSignedIn);
     if (isNew) {
       await createProduct(user.uid, productId, payload);
     } else {
@@ -544,12 +657,15 @@ export default function App() {
     if (previewMode) {
       const target = products.find((p) => p.id === adjustment.productId);
       if (!target) {
-        throw new Error('Selected product could not be found.');
+        throw new Error(t.validation.stockProductRequired);
       }
       const nextQty = target.quantityInStock + adjustment.quantityChange;
       if (nextQty < 0) {
         throw new Error(
-          `Cannot remove ${Math.abs(adjustment.quantityChange)}; only ${target.quantityInStock} in stock.`
+          interpolate(t.validation.stockRemoveExceeds, {
+            requested: Math.abs(adjustment.quantityChange),
+            available: target.quantityInStock,
+          })
         );
       }
 
@@ -586,14 +702,19 @@ export default function App() {
       return;
     }
 
-    if (!user) throw new Error('You must be signed in.');
+    if (!user) throw new Error(t.auth.mustBeSignedIn);
     await recordStockAdjustment(user.uid, adjustment);
   }
 
-  async function handleCompleteSale(lineItems: SaleLineItem[], note: string): Promise<Sale> {
+  async function handleCompleteSale(
+    lineItems: SaleLineItem[],
+    note: string,
+    paymentMethod: PaymentMethod = 'cash'
+  ): Promise<Sale> {
     const cleanNote = note.trim().slice(0, 500);
-    const totalAmount = lineItems.reduce((sum, i) => sum + i.lineTotal, 0);
-    const totalCost = lineItems.reduce((sum, i) => sum + i.quantity * i.costPrice, 0);
+    const cleanMethod = normalizePaymentMethod(paymentMethod);
+    const totalAmount = Math.round(lineItems.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
+    const totalCost = Math.round(lineItems.reduce((sum, i) => sum + i.quantity * i.costPrice, 0) * 100) / 100;
     const itemCount = lineItems.reduce((sum, i) => sum + i.quantity, 0);
 
     if (previewMode) {
@@ -634,7 +755,7 @@ export default function App() {
         totalAmount,
         totalCost,
         itemCount,
-        paymentMethod: 'cash',
+        paymentMethod: cleanMethod,
         note: cleanNote,
         status: 'completed',
         createdAt: now,
@@ -651,8 +772,8 @@ export default function App() {
       return newSale;
     }
 
-    if (!user) throw new Error('You must be signed in.');
-    const saleId = await completeSaleTransaction(user.uid, lineItems, cleanNote);
+    if (!user) throw new Error(t.auth.mustBeSignedIn);
+    const saleId = await completeSaleTransaction(user.uid, lineItems, cleanNote, cleanMethod);
     return {
       id: saleId,
       ownerId: user.uid,
@@ -660,7 +781,7 @@ export default function App() {
       totalAmount,
       totalCost,
       itemCount,
-      paymentMethod: 'cash',
+      paymentMethod: cleanMethod,
       note: cleanNote,
       status: 'completed',
       createdAt: new Date(),
@@ -720,7 +841,7 @@ export default function App() {
       return;
     }
 
-    if (!user) throw new Error('You must be signed in.');
+    if (!user) throw new Error(t.auth.mustBeSignedIn);
     await voidSaleTransaction(user.uid, saleId);
   }
 
@@ -736,17 +857,27 @@ export default function App() {
     await setProductArchived(productId, archive);
   }
 
-  async function handleSaveSettings(
-    nextShopName: string,
-    nextCurrency: string,
-    nextWeekStartDay: number
-  ) {
-    const cleanWeekStart = normalizeWeekStartDay(nextWeekStartDay);
+  async function handleSaveSettings(values: StoreSettingsFormValues) {
+    if (!isManager) {
+      throw new Error(t.validation.onlyManagersSettings);
+    }
+    const cleanWeekStart = normalizeWeekStartDay(values.weekStartDay);
+    const cleanCurrency: SupportedCurrency = values.currency === 'USD' ? 'USD' : 'IQD';
+    setCachedBranding({
+      shopName: values.shopName,
+      storeSubtitle: values.storeSubtitle,
+      logoUrl: values.logoUrl,
+    });
+    saveCachedBranding(values.shopName, values.storeSubtitle, values.logoUrl);
+
     if (previewMode) {
       const updated: ShopSettings = {
         ownerId: 'preview-owner',
-        shopName: nextShopName,
-        currency: nextCurrency,
+        shopName: values.shopName,
+        storeSubtitle: values.storeSubtitle,
+        receiptFooter: values.receiptFooter,
+        logoUrl: values.logoUrl,
+        currency: cleanCurrency,
         weekStartDay: cleanWeekStart,
       };
       setShopSettings(updated);
@@ -757,12 +888,17 @@ export default function App() {
       }
       return;
     }
-    if (!user) throw new Error('You must be signed in.');
+    if (!user) throw new Error(t.auth.mustBeSignedIn);
     await saveShopSettings(
       user.uid,
-      nextShopName,
-      nextCurrency,
-      cleanWeekStart,
+      {
+        shopName: values.shopName,
+        storeSubtitle: values.storeSubtitle,
+        receiptFooter: values.receiptFooter,
+        logoUrl: values.logoUrl,
+        currency: cleanCurrency,
+        weekStartDay: cleanWeekStart,
+      },
       shopSettings !== null
     );
   }
@@ -772,16 +908,16 @@ export default function App() {
     : currentUserRecord?.email ?? normalizeEmail(user?.email ?? '');
 
   async function handleAddUser(input: { email: string; displayName: string; role: UserRole }) {
-    if (effectiveRole !== 'admin') {
-      throw new Error('Only admins can add users.');
+    if (!isManager) {
+      throw new Error(t.validation.onlyManagersAddUsers);
     }
-    const validation = validateNewUserForm(input, usersList);
+    const validation = validateNewUserForm(input, usersList, lang);
     if (!validation.valid) {
       const firstError =
         validation.errors.email ??
         validation.errors.displayName ??
         validation.errors.role ??
-        'Invalid user details.';
+        t.validation.userRoleInvalid;
       throw new Error(firstError);
     }
 
@@ -795,9 +931,10 @@ export default function App() {
         createdAt: now,
         updatedAt: now,
       };
+      const roleRank = (r: UserRole) => (r === 'admin' ? 0 : r === 'owner' ? 1 : 2);
       const nextUsers = [...usersList, newUser].sort((a, b) => {
         if (a.active !== b.active) return a.active ? -1 : 1;
-        if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+        if (a.role !== b.role) return roleRank(a.role) - roleRank(b.role);
         return a.email.localeCompare(b.email);
       });
       setUsersList(nextUsers);
@@ -812,32 +949,33 @@ export default function App() {
     rawEmail: string,
     updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active'>>
   ) {
-    if (effectiveRole !== 'admin') {
-      throw new Error('Only admins can modify user access.');
+    if (!isManager) {
+      throw new Error(t.validation.onlyManagersUpdateUsers);
     }
 
     const emailId = normalizeEmail(rawEmail);
     const targetUser = usersList.find((u) => normalizeEmail(u.email) === emailId);
     if (!targetUser) {
-      throw new Error('User record could not be found.');
+      throw new Error(t.validation.onlyManagersUpdateUsers);
     }
 
     if (updates.role !== undefined) {
-      const guard = canModifyUserRole(targetUser, updates.role, displayEmail, usersList);
+      const guard = canModifyUserRole(targetUser, updates.role, displayEmail, usersList, lang);
       if (!guard.allowed) {
-        throw new Error(guard.reason ?? 'Cannot modify this user role.');
+        throw new Error(guard.reason ?? t.validation.userRoleInvalid);
       }
     }
 
     if (updates.active !== undefined) {
-      const guard = canToggleUserActive(targetUser, updates.active, displayEmail, usersList);
+      const guard = canToggleUserActive(targetUser, updates.active, displayEmail, usersList, lang);
       if (!guard.allowed) {
-        throw new Error(guard.reason ?? 'Cannot update user status.');
+        throw new Error(guard.reason ?? t.validation.onlyManagersUpdateUsers);
       }
     }
 
     if (previewMode) {
       const now = new Date();
+      const roleRank = (r: UserRole) => (r === 'admin' ? 0 : r === 'owner' ? 1 : 2);
       const nextUsers = usersList
         .map((u) =>
           normalizeEmail(u.email) === emailId
@@ -854,7 +992,7 @@ export default function App() {
         )
         .sort((a, b) => {
           if (a.active !== b.active) return a.active ? -1 : 1;
-          if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+          if (a.role !== b.role) return roleRank(a.role) - roleRank(b.role);
           return a.email.localeCompare(b.email);
         });
       setUsersList(nextUsers);
@@ -868,7 +1006,7 @@ export default function App() {
   if (!authReady) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <p className="text-sm text-slate-500">Loading workspace...</p>
+        <p className="text-sm text-slate-500">{t.common.loadingWorkspace}</p>
       </div>
     );
   }
@@ -877,6 +1015,8 @@ export default function App() {
     return (
       <LoginScreen
         shopName={effectiveShopName}
+        storeSubtitle={effectiveStoreSubtitle}
+        logoUrl={effectiveLogoUrl}
         isSigningIn={false}
         errorMessage={null}
         unauthorizedEmail="visitor@example.com"
@@ -890,6 +1030,8 @@ export default function App() {
     return (
       <LoginScreen
         shopName={effectiveShopName}
+        storeSubtitle={effectiveStoreSubtitle}
+        logoUrl={effectiveLogoUrl}
         isSigningIn={isSigningIn}
         errorMessage={authError}
         unauthorizedEmail={null}
@@ -903,8 +1045,8 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-8">
         <div className="bg-white border border-slate-200 rounded-xl px-6 py-5 text-center space-y-2">
-          <p className="text-sm font-semibold text-slate-900">Checking store access...</p>
-          <p className="text-xs font-mono text-slate-500">{user.email}</p>
+          <p className="text-sm font-semibold text-slate-900">{t.auth.checkingAccess}</p>
+          <p dir="ltr" className="ltr-isolate text-xs font-mono text-slate-500">{user.email}</p>
         </div>
       </div>
     );
@@ -917,27 +1059,27 @@ export default function App() {
           <div className="flex items-start gap-3 text-red-900">
             <ShieldAlert className="w-5 h-5 text-red-600 shrink-0 mt-0.5" aria-hidden="true" />
             <div>
-              <h1 className="text-base font-bold text-slate-950">Could not verify access</h1>
+              <h1 className="text-base font-bold text-slate-950">{t.auth.verifyErrorTitle}</h1>
               <p className="mt-1 text-sm text-slate-600">
-                {accessError ?? 'A temporary connection error prevented verifying your account.'}
+                {accessError ?? t.auth.verifyErrorFallback}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3 pt-1">
             <button
               type="button"
-              onClick={() => setAccessCheckTick((t) => t + 1)}
+              onClick={() => setAccessCheckTick((tick) => tick + 1)}
               className="flex-1 h-10 px-4 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 inline-flex items-center justify-center gap-2"
             >
               <RefreshCw className="w-4 h-4" aria-hidden="true" />
-              Retry
+              {t.common.retry}
             </button>
             <button
               type="button"
               onClick={handleSignOut}
               className="h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              Sign out
+              {t.nav.signOut}
             </button>
           </div>
         </main>
@@ -949,9 +1091,11 @@ export default function App() {
     return (
       <LoginScreen
         shopName={effectiveShopName}
+        storeSubtitle={effectiveStoreSubtitle}
+        logoUrl={effectiveLogoUrl}
         isSigningIn={isSigningIn}
         errorMessage={authError}
-        unauthorizedEmail={user?.email ?? 'Unknown account'}
+        unauthorizedEmail={user?.email ?? t.auth.unknownAccount}
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
       />
@@ -960,18 +1104,46 @@ export default function App() {
 
   const ownerId = previewMode ? 'preview-owner' : user!.uid;
   const resolvedSection: NavSection =
-    activeSection === 'users' && effectiveRole !== 'admin' ? 'products' : activeSection;
+    !isManager && (activeSection === 'stock' || activeSection === 'reports' || activeSection === 'users')
+      ? 'sell'
+      : activeSection;
+
+  function handleSectionChange(nextSection: NavSection) {
+    if (
+      !isManager &&
+      (nextSection === 'stock' || nextSection === 'reports' || nextSection === 'users')
+    ) {
+      return;
+    }
+    setActiveSection(nextSection);
+  }
 
   return (
-    <div className="min-h-screen flex bg-white text-slate-900">
-      <Sidebar
+    <div className="min-h-screen flex flex-col md:flex-row bg-white text-slate-900">
+      <MobileTopHeader
         shopName={effectiveShopName}
+        logoUrl={effectiveLogoUrl}
         currency={effectiveCurrency}
-        activeSection={resolvedSection}
-        onSelectSection={setActiveSection}
         userEmail={displayEmail}
         userRole={effectiveRole}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          if (isManager) setSettingsOpen(true);
+        }}
+        onSignOut={handleSignOut}
+      />
+
+      <Sidebar
+        shopName={effectiveShopName}
+        storeSubtitle={effectiveStoreSubtitle}
+        logoUrl={effectiveLogoUrl}
+        currency={effectiveCurrency}
+        activeSection={resolvedSection}
+        onSelectSection={handleSectionChange}
+        userEmail={displayEmail}
+        userRole={effectiveRole}
+        onOpenSettings={() => {
+          if (isManager) setSettingsOpen(true);
+        }}
         onSignOut={handleSignOut}
       />
 
@@ -981,19 +1153,22 @@ export default function App() {
           isLoading={isLoadingProducts}
           loadError={loadError}
           currency={effectiveCurrency}
-          onAddProduct={(prefillBarcode) =>
+          isReadOnly={!isManager}
+          onAddProduct={(prefillBarcode) => {
+            if (!isManager) return;
             setFormModalState({
               open: true,
               editingProduct: null,
               initialBarcode: prefillBarcode,
-            })
-          }
-          onEditProduct={(product) =>
+            });
+          }}
+          onEditProduct={(product) => {
+            if (!isManager) return;
             setFormModalState({
               open: true,
               editingProduct: product,
-            })
-          }
+            });
+          }}
           onPrintLabel={(product) =>
             setLabelTarget({
               name: product.name,
@@ -1010,7 +1185,11 @@ export default function App() {
           isLoadingSales={isLoadingSales}
           loadError={salesLoadError}
           shopName={effectiveShopName}
+          storeSubtitle={effectiveStoreSubtitle}
+          receiptFooter={effectiveReceiptFooter}
+          logoUrl={effectiveLogoUrl}
           currency={effectiveCurrency}
+          hideCostDetails={!isManager}
           onCompleteSale={handleCompleteSale}
           onVoidSale={handleVoidSale}
         />
@@ -1040,16 +1219,32 @@ export default function App() {
           isLoading={isLoadingProducts || isLoadingSales}
           loadError={loadError ?? salesLoadError}
           shopName={effectiveShopName}
+          storeSubtitle={effectiveStoreSubtitle}
+          receiptFooter={effectiveReceiptFooter}
+          logoUrl={effectiveLogoUrl}
           currency={effectiveCurrency}
           weekStartDay={effectiveWeekStartDay}
           onChangeWeekStartDay={(day) =>
-            handleSaveSettings(effectiveShopName, effectiveCurrency, day)
+            handleSaveSettings({
+              shopName: effectiveShopName,
+              storeSubtitle: effectiveStoreSubtitle,
+              receiptFooter: effectiveReceiptFooter,
+              logoUrl: effectiveLogoUrl,
+              currency: effectiveCurrency,
+              weekStartDay: day,
+            })
           }
           onVoidSale={handleVoidSale}
         />
       )}
 
-      {formModalState.open && (
+      <MobileBottomNav
+        activeSection={resolvedSection}
+        onSelectSection={handleSectionChange}
+        userRole={effectiveRole}
+      />
+
+      {isManager && formModalState.open && (
         <ProductFormModal
           ownerId={ownerId}
           editingProduct={formModalState.editingProduct}
@@ -1074,9 +1269,12 @@ export default function App() {
         />
       )}
 
-      {settingsOpen && (
+      {isManager && settingsOpen && (
         <ShopSettingsModal
           initialShopName={effectiveShopName}
+          initialStoreSubtitle={effectiveStoreSubtitle}
+          initialReceiptFooter={effectiveReceiptFooter}
+          initialLogoUrl={effectiveLogoUrl}
           initialCurrency={effectiveCurrency}
           initialWeekStartDay={effectiveWeekStartDay}
           products={products}

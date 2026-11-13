@@ -11,6 +11,7 @@ import {
   Printer,
   TrendingUp,
 } from 'lucide-react';
+import { useTranslation } from '../contexts/I18nContext';
 import type { Product, Sale, StockMovement } from '../types/inventory';
 import {
   buildProductsBackupCsv,
@@ -19,13 +20,12 @@ import {
   downloadCsvFile,
   getBackupFilename,
 } from '../utils/backupCsv';
-import { formatActionError, formatCurrency, formatNumber } from '../utils/formatters';
+import { formatActionError, formatNumber } from '../utils/formatters';
+import { interpolate } from '../utils/i18n';
 import {
   buildPeriodReport,
   buildReportCsv,
-  getWeekStartDayName,
   normalizeWeekStartDay,
-  WEEKDAY_OPTIONS,
   type ReportPeriodType,
 } from '../utils/reports';
 import { formatSaleDateTime } from '../utils/sales';
@@ -40,6 +40,9 @@ interface ReportsViewProps {
   isLoading: boolean;
   loadError: string | null;
   shopName: string;
+  storeSubtitle?: string;
+  receiptFooter?: string;
+  logoUrl?: string;
   currency: string;
   weekStartDay: number;
   onChangeWeekStartDay: (day: number) => Promise<void>;
@@ -53,10 +56,15 @@ function PercentDelta({
   pct: number | null;
   prevFormatted: string;
 }) {
+  const { t } = useTranslation();
+
   if (pct === null) {
     return (
       <p className="mt-1.5 text-xs text-slate-500 tabular-nums">
-        vs prev: {prevFormatted}
+        {t.reports.vsPrev}{' '}
+        <span dir="ltr" className="ltr-isolate font-mono">
+          {prevFormatted}
+        </span>
       </p>
     );
   }
@@ -71,7 +79,10 @@ function PercentDelta({
 
   return (
     <p className="mt-1.5 text-xs flex items-center gap-1.5 flex-wrap tabular-nums">
-      <span className={`inline-flex items-center gap-0.5 font-semibold font-mono ${toneClass}`}>
+      <span
+        dir="ltr"
+        className={`ltr-isolate inline-flex items-center gap-0.5 font-semibold font-mono ${toneClass}`}
+      >
         {isUp ? (
           <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />
         ) : isDown ? (
@@ -79,7 +90,12 @@ function PercentDelta({
         ) : null}
         {pct > 0 ? `+${pct}%` : `${pct}%`}
       </span>
-      <span className="text-slate-500">vs {prevFormatted}</span>
+      <span className="text-slate-500">
+        {t.reports.vs}{' '}
+        <span dir="ltr" className="ltr-isolate font-mono">
+          {prevFormatted}
+        </span>
+      </span>
     </p>
   );
 }
@@ -91,11 +107,15 @@ export function ReportsView({
   isLoading,
   loadError,
   shopName,
+  storeSubtitle,
+  receiptFooter,
+  logoUrl,
   currency,
   weekStartDay,
   onChangeWeekStartDay,
   onVoidSale,
 }: ReportsViewProps) {
+  const { lang, t, formatCurrencyLocalized, weekdayLabel, weekdayOptions } = useTranslation();
   const [periodType, setPeriodType] = useState<ReportPeriodType>('weekly');
   const [periodOffset, setPeriodOffset] = useState<number>(0);
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
@@ -110,8 +130,9 @@ export function ReportsView({
         periodType,
         periodOffset,
         weekStartDay: safeWeekStartDay,
+        lang,
       }),
-    [sales, products, periodType, periodOffset, safeWeekStartDay]
+    [sales, products, periodType, periodOffset, safeWeekStartDay, lang]
   );
 
   const selectedSale = useMemo(
@@ -178,18 +199,18 @@ export function ReportsView({
       : 0;
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-white">
+    <div className="flex-1 flex flex-col min-w-0 md:h-screen md:overflow-hidden bg-white">
       {/* Top Header & Period Controls (hidden when printing report) */}
-      <header className="print-hidden px-6 py-3.5 border-b border-slate-200 flex items-center justify-between gap-4 flex-wrap bg-white shrink-0">
-        <div className="flex items-center gap-4 flex-wrap">
+      <header className="print-hidden px-4 md:px-6 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap bg-white shrink-0">
+        <div className="flex items-center gap-3 md:gap-4 flex-wrap">
           <h1 className="text-lg font-bold text-slate-950 tracking-tight whitespace-nowrap">
-            Reports
+            {t.reports.title}
           </h1>
 
           {/* Weekly / Monthly tabs */}
           <div
             role="tablist"
-            aria-label="Report period type"
+            aria-label={t.reports.periodTypeAria}
             className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg"
           >
             <button
@@ -197,26 +218,26 @@ export function ReportsView({
               role="tab"
               aria-selected={periodType === 'weekly'}
               onClick={() => handlePeriodTypeChange('weekly')}
-              className={`h-8 px-3.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap ${
+              className={`min-h-[34px] px-3.5 rounded-md text-xs font-semibold transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap ${
                 periodType === 'weekly'
                   ? 'bg-white text-slate-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Weekly
+              {t.reports.weekly}
             </button>
             <button
               type="button"
               role="tab"
               aria-selected={periodType === 'monthly'}
               onClick={() => handlePeriodTypeChange('monthly')}
-              className={`h-8 px-3.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap ${
+              className={`min-h-[34px] px-3.5 rounded-md text-xs font-semibold transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap ${
                 periodType === 'monthly'
                   ? 'bg-white text-slate-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Monthly
+              {t.reports.monthly}
             </button>
           </div>
 
@@ -225,14 +246,14 @@ export function ReportsView({
             <button
               type="button"
               onClick={() => setPeriodOffset((prev) => prev - 1)}
-              aria-label={periodType === 'weekly' ? 'Previous week' : 'Previous month'}
-              className="w-8 h-8 rounded-md text-slate-600 hover:text-slate-950 hover:bg-slate-100 flex items-center justify-center transition-colors"
+              aria-label={periodType === 'weekly' ? t.reports.previousWeek : t.reports.previousMonth}
+              className="w-9 h-9 md:w-8 md:h-8 rounded-md text-slate-600 hover:text-slate-950 hover:bg-slate-100 flex items-center justify-center transition-colors"
             >
-              <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+              <ChevronLeft className="w-4 h-4 rtl:rotate-180" aria-hidden="true" />
             </button>
             <span
               data-testid="report-period-label"
-              className="px-2.5 text-xs font-semibold text-slate-950 tabular-nums whitespace-nowrap min-w-[148px] text-center"
+              className="px-2 text-xs font-semibold text-slate-950 tabular-nums whitespace-nowrap min-w-[132px] sm:min-w-[148px] text-center"
             >
               {report.period.label}
             </span>
@@ -240,10 +261,10 @@ export function ReportsView({
               type="button"
               disabled={periodOffset >= 0}
               onClick={() => setPeriodOffset((prev) => Math.min(0, prev + 1))}
-              aria-label={periodType === 'weekly' ? 'Next week' : 'Next month'}
-              className="w-8 h-8 rounded-md text-slate-600 hover:text-slate-950 hover:bg-slate-100 disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+              aria-label={periodType === 'weekly' ? t.reports.nextWeek : t.reports.nextMonth}
+              className="w-9 h-9 md:w-8 md:h-8 rounded-md text-slate-600 hover:text-slate-950 hover:bg-slate-100 disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
             >
-              <ChevronRight className="w-4 h-4" aria-hidden="true" />
+              <ChevronRight className="w-4 h-4 rtl:rotate-180" aria-hidden="true" />
             </button>
           </div>
 
@@ -251,9 +272,9 @@ export function ReportsView({
             <button
               type="button"
               onClick={() => setPeriodOffset(0)}
-              className="h-9 px-3 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+              className="min-h-[36px] px-3 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap"
             >
-              {periodType === 'weekly' ? 'This week' : 'This month'}
+              {periodType === 'weekly' ? t.reports.thisWeek : t.reports.thisMonth}
             </button>
           )}
         </div>
@@ -265,17 +286,17 @@ export function ReportsView({
                 htmlFor="reports-week-start-select"
                 className="text-xs text-slate-500 whitespace-nowrap"
               >
-                Week starts
+                {t.reports.weekStarts}
               </label>
               <select
                 id="reports-week-start-select"
-                aria-label="Week starts on"
+                aria-label={t.reports.weekStartsAria}
                 disabled={isUpdatingWeekDay}
                 value={safeWeekStartDay}
                 onChange={(e) => void handleWeekStartChange(Number(e.target.value))}
-                className="h-9 px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-blue-600"
+                className="min-h-[38px] px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:border-blue-600"
               >
-                {WEEKDAY_OPTIONS.map((opt) => (
+                {weekdayOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -287,19 +308,19 @@ export function ReportsView({
           <button
             type="button"
             onClick={handleExportCsv}
-            className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+            className="min-h-[38px] px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
           >
             <Download className="w-3.5 h-3.5" aria-hidden="true" />
-            Export CSV
+            {t.reports.exportCsv}
           </button>
 
           <button
             type="button"
             onClick={handlePrintReport}
-            className="h-9 px-4 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+            className="min-h-[38px] px-4 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
           >
             <Printer className="w-3.5 h-3.5" aria-hidden="true" />
-            Print report
+            {t.reports.printReport}
           </button>
         </div>
       </header>
@@ -307,17 +328,17 @@ export function ReportsView({
       {/* Scrollable Report Body */}
       <div
         id="reports-scroll-container"
-        className="flex-1 overflow-y-auto bg-slate-50/50"
+        className="flex-1 md:overflow-y-auto bg-slate-50/50 pb-24 md:pb-6"
       >
         {loadError && (
-          <div className="m-6 p-4 rounded-lg border border-red-200 bg-red-50 text-sm text-red-800">
-            Could not load report data: {formatActionError(loadError, 'Unable to load store records.')}
+          <div className="m-4 md:m-6 p-4 rounded-lg border border-red-200 bg-red-50 text-sm text-red-800">
+            {t.reports.loadError} {formatActionError(loadError, t.auth.verifyErrorFallback)}
           </div>
         )}
 
         {isLoading ? (
-          <div className="p-6 space-y-5" aria-label="Loading reports">
-            <div className="grid grid-cols-3 gap-4">
+          <div className="p-4 md:p-6 space-y-5" aria-label={t.reports.loadingAria}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Array.from({ length: 6 }).map((_, idx) => (
                 <div
                   key={idx}
@@ -328,66 +349,115 @@ export function ReportsView({
             <div className="h-64 rounded-xl border border-slate-200 bg-white animate-pulse" />
           </div>
         ) : (
-          <div id="printable-report" className="p-6 space-y-5 max-w-[1440px]">
+          <div id="printable-report" className="p-4 md:p-6 space-y-5 max-w-[1440px]">
             {/* Print-Only Report Header */}
             <div className="print-only pb-4 border-b border-slate-300 mb-4">
               <div className="flex items-baseline justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-bold text-slate-950">
-                    {shopName} — {periodType === 'weekly' ? 'Weekly' : 'Monthly'} Report
+                    {shopName} —{' '}
+                    {periodType === 'weekly'
+                      ? t.reports.weeklyReportSuffix
+                      : t.reports.monthlyReportSuffix}
                   </h1>
                   <p className="text-sm text-slate-700 mt-0.5">
-                    Period: {report.period.label}
+                    {t.reports.periodPrefix} {report.period.label}
                     {periodType === 'weekly'
-                      ? ` · Week starting ${getWeekStartDayName(safeWeekStartDay)}`
+                      ? ` · ${t.reports.weekStartingPrefix} ${weekdayLabel(safeWeekStartDay)}`
                       : ''}
-                    {' · '}Compared against {report.period.prevLabel}
+                    {' · '}
+                    {t.reports.comparedAgainstPrefix} {report.period.prevLabel}
                   </p>
                 </div>
                 <p className="text-xs text-slate-500 font-mono">
-                  Printed {formatSaleDateTime(new Date())}
+                  {t.reports.printedPrefix}{' '}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatSaleDateTime(new Date(), lang)}
+                  </span>
                 </p>
               </div>
             </div>
 
             {/* Period Comparison Context Line */}
-            <div className="flex items-center justify-between gap-4 text-xs text-slate-500">
+            <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-slate-500">
               <span>
-                Showing completed cash sales (voided sales excluded) · Compared against{' '}
+                {t.reports.completedSalesContext}{' '}
                 <span className="font-medium text-slate-700">{report.period.prevLabel}</span>
               </span>
               {periodType === 'weekly' && (
                 <span className="whitespace-nowrap">
-                  Week starts on{' '}
+                  {t.reports.weekStartsOn}{' '}
                   <span className="font-medium text-slate-700">
-                    {getWeekStartDayName(safeWeekStartDay)}
+                    {weekdayLabel(safeWeekStartDay)}
                   </span>
                 </span>
               )}
             </div>
 
-            {/* 6 Core Period KPIs (3x2 grid keeps IQD totals & deltas single-line at 1366x768) */}
-            <section aria-label="Period performance metrics" className="grid grid-cols-3 gap-4 print-break-avoid">
+            {/* 6 Core Period KPIs */}
+            <section
+              aria-label={t.reports.metricsAria}
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 print-break-avoid"
+            >
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-medium text-slate-500">Total Sales</p>
+                <p className="text-xs font-medium text-slate-500">{t.reports.totalSales}</p>
                 <p
                   data-testid="report-total-sales"
                   className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatCurrency(report.summary.totalSales, currency)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatCurrencyLocalized(report.summary.totalSales, currency)}
+                  </span>
                 </p>
                 <PercentDelta
                   pct={report.changes.totalSalesPct}
-                  prevFormatted={formatCurrency(report.previousSummary.totalSales, currency)}
+                  prevFormatted={formatCurrencyLocalized(report.previousSummary.totalSales, currency)}
                 />
+                <div className="mt-3 pt-2.5 border-t border-slate-100 grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="block text-[11px] text-slate-500">
+                      {t.reports.cashSalesCount} (
+                      <span dir="ltr" className="ltr-isolate font-mono">
+                        {formatNumber(report.summary.cashSalesCount)}
+                      </span>
+                      )
+                    </span>
+                    <span
+                      data-testid="report-cash-sales"
+                      dir="ltr"
+                      className="ltr-isolate font-mono font-semibold tabular-nums text-slate-900"
+                    >
+                      {formatCurrencyLocalized(report.summary.cashSalesTotal, currency)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] text-slate-500">
+                      {t.reports.fibDigitalCount} (
+                      <span dir="ltr" className="ltr-isolate font-mono">
+                        {formatNumber(report.summary.digitalSalesCount)}
+                      </span>
+                      )
+                    </span>
+                    <span
+                      data-testid="report-digital-sales"
+                      dir="ltr"
+                      className="ltr-isolate font-mono font-semibold tabular-nums text-blue-700"
+                    >
+                      {formatCurrencyLocalized(report.summary.digitalSalesTotal, currency)}
+                    </span>
+                  </div>
+                </div>
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium text-slate-500">Gross Profit</p>
+                  <p className="text-xs font-medium text-slate-500">{t.reports.grossProfit}</p>
                   {report.summary.totalSales > 0 && (
-                    <span className="text-[11px] font-mono text-slate-500 tabular-nums">
-                      {grossMarginPct}% margin
+                    <span className="text-[11px] text-slate-500 tabular-nums">
+                      <span dir="ltr" className="ltr-isolate font-mono">
+                        {grossMarginPct}%
+                      </span>{' '}
+                      {t.reports.marginSuffix}
                     </span>
                   )}
                 </div>
@@ -397,35 +467,44 @@ export function ReportsView({
                     report.summary.grossProfit < 0 ? 'text-red-700' : 'text-emerald-700'
                   }`}
                 >
-                  {formatCurrency(report.summary.grossProfit, currency)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatCurrencyLocalized(report.summary.grossProfit, currency)}
+                  </span>
                 </p>
                 <PercentDelta
                   pct={report.changes.grossProfitPct}
-                  prevFormatted={formatCurrency(report.previousSummary.grossProfit, currency)}
+                  prevFormatted={formatCurrencyLocalized(report.previousSummary.grossProfit, currency)}
                 />
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-medium text-slate-500">Average Sale Value</p>
+                <p className="text-xs font-medium text-slate-500">{t.reports.averageSaleValue}</p>
                 <p
                   data-testid="report-avg-sale"
                   className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatCurrency(report.summary.averageSaleValue, currency)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatCurrencyLocalized(report.summary.averageSaleValue, currency)}
+                  </span>
                 </p>
                 <PercentDelta
                   pct={report.changes.averageSaleValuePct}
-                  prevFormatted={formatCurrency(report.previousSummary.averageSaleValue, currency)}
+                  prevFormatted={formatCurrencyLocalized(
+                    report.previousSummary.averageSaleValue,
+                    currency
+                  )}
                 />
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-medium text-slate-500">Number of Sales</p>
+                <p className="text-xs font-medium text-slate-500">{t.reports.numberOfSales}</p>
                 <p
                   data-testid="report-sales-count"
                   className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatNumber(report.summary.salesCount)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatNumber(report.summary.salesCount)}
+                  </span>
                 </p>
                 <PercentDelta
                   pct={report.changes.salesCountPct}
@@ -434,12 +513,14 @@ export function ReportsView({
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-medium text-slate-500">Items Sold</p>
+                <p className="text-xs font-medium text-slate-500">{t.reports.itemsSold}</p>
                 <p
                   data-testid="report-items-sold"
                   className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatNumber(report.summary.itemsSold)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatNumber(report.summary.itemsSold)}
+                  </span>
                 </p>
                 <PercentDelta
                   pct={report.changes.itemsSoldPct}
@@ -448,16 +529,18 @@ export function ReportsView({
               </div>
 
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-medium text-slate-500">Total Discount Given</p>
+                <p className="text-xs font-medium text-slate-500">{t.reports.totalDiscountGiven}</p>
                 <p
                   data-testid="report-discount-given"
                   className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatCurrency(report.summary.totalDiscountGiven, currency)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatCurrencyLocalized(report.summary.totalDiscountGiven, currency)}
+                  </span>
                 </p>
                 <PercentDelta
                   pct={report.changes.totalDiscountGivenPct}
-                  prevFormatted={formatCurrency(
+                  prevFormatted={formatCurrencyLocalized(
                     report.previousSummary.totalDiscountGiven,
                     currency
                   )}
@@ -466,8 +549,8 @@ export function ReportsView({
             </section>
 
             {/* Sales Per Day Chart + Stock Valuation Snapshot */}
-            <section className="grid grid-cols-12 gap-4 items-stretch">
-              <div className="col-span-8">
+            <section className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+              <div className="lg:col-span-8 min-w-0">
                 <SalesPerDayChart
                   series={report.dailySeries}
                   periodType={periodType}
@@ -477,47 +560,57 @@ export function ReportsView({
 
               <div
                 data-testid="report-stock-valuation"
-                className="col-span-4 bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between print-break-avoid"
+                className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between print-break-avoid"
               >
                 <div>
-                  <h2 className="text-sm font-bold text-slate-950">Current Stock Value</h2>
+                  <h2 className="text-sm font-bold text-slate-950">{t.reports.currentStockValue}</h2>
                   <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
-                    Across {formatNumber(report.stockValuation.activeProductCount)} active toys ·{' '}
-                    {formatNumber(report.stockValuation.totalUnits)} units on hand
+                    {interpolate(t.reports.activeToysUnits, {
+                      products: formatNumber(report.stockValuation.activeProductCount),
+                      units: formatNumber(report.stockValuation.totalUnits),
+                    })}
                   </p>
                 </div>
 
-                <div className="my-4 divide-y divide-slate-200">
+                <div className="my-4 divide-y divide-slate-100">
                   <div className="py-3 first:pt-0">
-                    <p className="text-xs font-medium text-slate-500">Value at Cost</p>
+                    <p className="text-xs font-medium text-slate-500">{t.reports.valueAtCost}</p>
                     <p className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-950">
-                      {formatCurrency(report.stockValuation.totalCostValue, currency)}
+                      <span dir="ltr" className="ltr-isolate">
+                        {formatCurrencyLocalized(report.stockValuation.totalCostValue, currency)}
+                      </span>
                     </p>
                   </div>
 
                   <div className="py-3">
-                    <p className="text-xs font-medium text-slate-500">Value at Selling Price</p>
+                    <p className="text-xs font-medium text-slate-500">
+                      {t.reports.valueAtSellingPrice}
+                    </p>
                     <p className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-950">
-                      {formatCurrency(report.stockValuation.totalSellingValue, currency)}
+                      <span dir="ltr" className="ltr-isolate">
+                        {formatCurrencyLocalized(report.stockValuation.totalSellingValue, currency)}
+                      </span>
                     </p>
                   </div>
 
                   <div className="pt-3">
-                    <p className="text-xs font-medium text-slate-500">Potential Retail Margin</p>
+                    <p className="text-xs font-medium text-slate-500">
+                      {t.reports.potentialRetailMargin}
+                    </p>
                     <p className="mt-1 text-base font-bold font-mono tabular-nums text-emerald-700">
-                      {formatCurrency(report.stockValuation.potentialProfit, currency)}
+                      <span dir="ltr" className="ltr-isolate">
+                        {formatCurrencyLocalized(report.stockValuation.potentialProfit, currency)}
+                      </span>
                     </p>
                   </div>
                 </div>
 
-                <p className="text-[11px] text-slate-400">
-                  Archived products and negative oversold units are excluded from valuation.
-                </p>
+                <p className="text-[11px] text-slate-400">{t.reports.valuationNote}</p>
               </div>
             </section>
 
             {/* Top 10 Best-Selling Products & Current Low-Stock List */}
-            <section className="grid grid-cols-2 gap-4 items-start">
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
               {/* Top 10 Best-Selling */}
               <div
                 data-testid="report-top-products"
@@ -526,56 +619,64 @@ export function ReportsView({
                 <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-slate-500" aria-hidden="true" />
-                    <h2 className="text-sm font-bold text-slate-950">
-                      Top 10 Best-Selling Products
-                    </h2>
+                    <h2 className="text-sm font-bold text-slate-950">{t.reports.top10Title}</h2>
                   </div>
-                  <span className="text-xs text-slate-500 tabular-nums">
-                    {report.topProducts.length} shown
+                  <span className="text-xs text-slate-500 tabular-nums shrink-0">
+                    {interpolate(t.reports.shownCount, {
+                      count: formatNumber(report.topProducts.length),
+                    })}
                   </span>
                 </div>
 
                 {report.topProducts.length === 0 ? (
                   <div className="px-5 py-10 text-center text-xs text-slate-500">
-                    No completed sales in this period.
+                    {t.reports.noCompletedSales}
                   </div>
                 ) : (
-                  <table className="w-full border-collapse text-left">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
-                      <tr>
-                        <th scope="col" className="py-2 pl-5 pr-2 w-10">
-                          #
-                        </th>
-                        <th scope="col" className="py-2 px-2">
-                          Product
-                        </th>
-                        <th scope="col" className="py-2 px-2 text-right w-16">
-                          Qty
-                        </th>
-                        <th scope="col" className="py-2 pl-2 pr-5 text-right w-32">
-                          Revenue
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 text-xs">
-                      {report.topProducts.map((item, idx) => (
-                        <tr key={item.productId} className="hover:bg-slate-50/70">
-                          <td className="py-2.5 pl-5 pr-2 font-mono text-slate-400 tabular-nums">
-                            {idx + 1}
-                          </td>
-                          <td className="py-2.5 px-2 font-semibold text-slate-900">
-                            {item.productName}
-                          </td>
-                          <td className="py-2.5 px-2 text-right font-mono font-semibold text-slate-800 tabular-nums">
-                            {formatNumber(item.quantity)}
-                          </td>
-                          <td className="py-2.5 pl-2 pr-5 text-right font-mono font-semibold text-slate-950 tabular-nums whitespace-nowrap">
-                            {formatCurrency(item.revenue, currency)}
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-start">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
+                        <tr>
+                          <th scope="col" className="py-2 ps-5 pe-2 w-10">
+                            {t.reports.colRank}
+                          </th>
+                          <th scope="col" className="py-2 px-2">
+                            {t.reports.colProduct}
+                          </th>
+                          <th scope="col" className="py-2 px-2 text-end w-16">
+                            {t.reports.colQty}
+                          </th>
+                          <th scope="col" className="py-2 ps-2 pe-5 text-end w-32">
+                            {t.reports.colRevenue}
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {report.topProducts.map((item, idx) => (
+                          <tr key={item.productId} className="hover:bg-slate-50/70">
+                            <td className="py-2.5 ps-5 pe-2 font-mono text-slate-400 tabular-nums">
+                              <span dir="ltr" className="ltr-isolate">
+                                {idx + 1}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 font-semibold text-slate-900">
+                              {item.productName}
+                            </td>
+                            <td className="py-2.5 px-2 text-end font-mono font-semibold text-slate-800 tabular-nums">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatNumber(item.quantity)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 ps-2 pe-5 text-end font-mono font-semibold text-slate-950 tabular-nums whitespace-nowrap">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatCurrencyLocalized(item.revenue, currency)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
 
@@ -587,70 +688,78 @@ export function ReportsView({
                 <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-amber-600" aria-hidden="true" />
-                    <h2 className="text-sm font-bold text-slate-950">Current Low-Stock List</h2>
+                    <h2 className="text-sm font-bold text-slate-950">{t.reports.lowStockTitle}</h2>
                   </div>
                   <span className="text-xs text-slate-500 tabular-nums">
-                    {formatNumber(report.lowStockProducts.length)} item
-                    {report.lowStockProducts.length === 1 ? '' : 's'}
+                    {formatNumber(report.lowStockProducts.length)}{' '}
+                    {report.lowStockProducts.length === 1 ? t.common.item : t.common.items}
                   </span>
                 </div>
 
                 {report.lowStockProducts.length === 0 ? (
                   <div className="px-5 py-10 text-center text-xs text-slate-500">
-                    All active products are above their reorder levels.
+                    {t.reports.allAboveReorder}
                   </div>
                 ) : (
-                  <table className="w-full border-collapse text-left">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
-                      <tr>
-                        <th scope="col" className="py-2 pl-5 pr-2">
-                          Product
-                        </th>
-                        <th scope="col" className="py-2 px-2 text-right w-20">
-                          Stock
-                        </th>
-                        <th scope="col" className="py-2 px-2 text-right w-20">
-                          Reorder
-                        </th>
-                        <th scope="col" className="py-2 pl-2 pr-5 text-right w-28">
-                          Cost Value
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 text-xs">
-                      {report.lowStockProducts.map((item) => (
-                        <tr key={item.productId} className="hover:bg-slate-50/70">
-                          <td className="py-2.5 pl-5 pr-2">
-                            <p className="font-semibold text-slate-900">{item.name}</p>
-                            {item.variantLabel || item.category ? (
-                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                {[item.category, item.variantLabel].filter(Boolean).join(' · ')}
-                              </p>
-                            ) : null}
-                          </td>
-                          <td
-                            className={`py-2.5 px-2 text-right font-mono font-bold tabular-nums ${
-                              item.quantityInStock <= 0 ? 'text-red-700' : 'text-amber-700'
-                            }`}
-                          >
-                            {formatNumber(item.quantityInStock)}
-                          </td>
-                          <td className="py-2.5 px-2 text-right font-mono text-slate-500 tabular-nums">
-                            {formatNumber(item.reorderLevel)}
-                          </td>
-                          <td className="py-2.5 pl-2 pr-5 text-right font-mono text-slate-800 tabular-nums whitespace-nowrap">
-                            {formatCurrency(item.costValue, currency)}
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-start">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
+                        <tr>
+                          <th scope="col" className="py-2 ps-5 pe-2">
+                            {t.reports.colProduct}
+                          </th>
+                          <th scope="col" className="py-2 px-2 text-end w-20">
+                            {t.reports.colStock}
+                          </th>
+                          <th scope="col" className="py-2 px-2 text-end w-20">
+                            {t.reports.colReorder}
+                          </th>
+                          <th scope="col" className="py-2 ps-2 pe-5 text-end w-28">
+                            {t.reports.colCostValue}
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {report.lowStockProducts.map((item) => (
+                          <tr key={item.productId} className="hover:bg-slate-50/70">
+                            <td className="py-2.5 ps-5 pe-2">
+                              <p className="font-semibold text-slate-900">{item.name}</p>
+                              {item.variantLabel || item.category ? (
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  {[item.category, item.variantLabel].filter(Boolean).join(' · ')}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td
+                              className={`py-2.5 px-2 text-end font-mono font-bold tabular-nums ${
+                                item.quantityInStock <= 0 ? 'text-red-700' : 'text-amber-700'
+                              }`}
+                            >
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatNumber(item.quantityInStock)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 text-end font-mono text-slate-500 tabular-nums">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatNumber(item.reorderLevel)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 ps-2 pe-5 text-end font-mono text-slate-800 tabular-nums whitespace-nowrap">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatCurrencyLocalized(item.costValue, currency)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </section>
 
             {/* Unsold In-Stock Products & Sales With Notes */}
-            <section className="grid grid-cols-2 gap-4 items-start">
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
               {/* Products with Stock but No Sales in Period */}
               <div
                 data-testid="report-unsold-products"
@@ -659,62 +768,68 @@ export function ReportsView({
                 <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Package className="w-4 h-4 text-slate-500" aria-hidden="true" />
-                    <h2 className="text-sm font-bold text-slate-950">
-                      In Stock With No Sales in Period
-                    </h2>
+                    <h2 className="text-sm font-bold text-slate-950">{t.reports.unsoldTitle}</h2>
                   </div>
-                  <span className="text-xs text-slate-500 tabular-nums">
-                    {formatNumber(report.unsoldInStockProducts.length)} item
-                    {report.unsoldInStockProducts.length === 1 ? '' : 's'}
+                  <span className="text-xs text-slate-500 tabular-nums shrink-0">
+                    {formatNumber(report.unsoldInStockProducts.length)}{' '}
+                    {report.unsoldInStockProducts.length === 1 ? t.common.item : t.common.items}
                   </span>
                 </div>
 
                 {report.unsoldInStockProducts.length === 0 ? (
                   <div className="px-5 py-10 text-center text-xs text-slate-500">
-                    Every in-stock product recorded at least one sale in this period.
+                    {t.reports.allSoldHint}
                   </div>
                 ) : (
-                  <table className="w-full border-collapse text-left">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
-                      <tr>
-                        <th scope="col" className="py-2 pl-5 pr-2">
-                          Product
-                        </th>
-                        <th scope="col" className="py-2 px-2 text-right w-16">
-                          Stock
-                        </th>
-                        <th scope="col" className="py-2 px-2 text-right w-28">
-                          At Cost
-                        </th>
-                        <th scope="col" className="py-2 pl-2 pr-5 text-right w-28">
-                          At Selling
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 text-xs">
-                      {report.unsoldInStockProducts.map((item) => (
-                        <tr key={item.productId} className="hover:bg-slate-50/70">
-                          <td className="py-2.5 pl-5 pr-2">
-                            <p className="font-semibold text-slate-900">{item.name}</p>
-                            {item.category || item.variantLabel ? (
-                              <p className="text-[11px] text-slate-500 mt-0.5">
-                                {[item.category, item.variantLabel].filter(Boolean).join(' · ')}
-                              </p>
-                            ) : null}
-                          </td>
-                          <td className="py-2.5 px-2 text-right font-mono font-semibold text-slate-800 tabular-nums">
-                            {formatNumber(item.quantityInStock)}
-                          </td>
-                          <td className="py-2.5 px-2 text-right font-mono text-slate-700 tabular-nums whitespace-nowrap">
-                            {formatCurrency(item.costValue, currency)}
-                          </td>
-                          <td className="py-2.5 pl-2 pr-5 text-right font-mono font-semibold text-slate-950 tabular-nums whitespace-nowrap">
-                            {formatCurrency(item.sellingValue, currency)}
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-start">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
+                        <tr>
+                          <th scope="col" className="py-2 ps-5 pe-2">
+                            {t.reports.colProduct}
+                          </th>
+                          <th scope="col" className="py-2 px-2 text-end w-16">
+                            {t.reports.colStock}
+                          </th>
+                          <th scope="col" className="py-2 px-2 text-end w-28">
+                            {t.reports.colAtCost}
+                          </th>
+                          <th scope="col" className="py-2 ps-2 pe-5 text-end w-28">
+                            {t.reports.colAtSelling}
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {report.unsoldInStockProducts.map((item) => (
+                          <tr key={item.productId} className="hover:bg-slate-50/70">
+                            <td className="py-2.5 ps-5 pe-2">
+                              <p className="font-semibold text-slate-900">{item.name}</p>
+                              {item.category || item.variantLabel ? (
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  {[item.category, item.variantLabel].filter(Boolean).join(' · ')}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="py-2.5 px-2 text-end font-mono font-semibold text-slate-800 tabular-nums">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatNumber(item.quantityInStock)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 text-end font-mono text-slate-700 tabular-nums whitespace-nowrap">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatCurrencyLocalized(item.costValue, currency)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 ps-2 pe-5 text-end font-mono font-semibold text-slate-950 tabular-nums whitespace-nowrap">
+                              <span dir="ltr" className="ltr-isolate">
+                                {formatCurrencyLocalized(item.sellingValue, currency)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
 
@@ -727,21 +842,21 @@ export function ReportsView({
                   <div className="flex items-center gap-2">
                     <FileText className="w-4 h-4 text-amber-700" aria-hidden="true" />
                     <h2 className="text-sm font-bold text-slate-950">
-                      Sales With Notes in Period
+                      {t.reports.notedSalesTitle}
                     </h2>
                   </div>
-                  <span className="text-xs text-slate-500 tabular-nums">
-                    {formatNumber(report.notedSales.length)} sale
-                    {report.notedSales.length === 1 ? '' : 's'}
+                  <span className="text-xs text-slate-500 tabular-nums shrink-0">
+                    {formatNumber(report.notedSales.length)}{' '}
+                    {report.notedSales.length === 1 ? t.common.saleSingular : t.common.salePlural}
                   </span>
                 </div>
 
                 {report.notedSales.length === 0 ? (
                   <div className="px-5 py-10 text-center text-xs text-slate-500">
-                    No noted sales recorded in this period.
+                    {t.reports.noNotedSales}
                   </div>
                 ) : (
-                  <div className="divide-y divide-slate-200">
+                  <div className="divide-y divide-slate-100">
                     {report.notedSales.map((sale) => {
                       const itemsSummary = sale.items
                         .map((i) => `${i.quantity}× ${i.productName}`)
@@ -751,21 +866,24 @@ export function ReportsView({
                           key={sale.id}
                           type="button"
                           onClick={() => setSelectedSaleId(sale.id)}
-                          className="w-full px-5 py-3 text-left hover:bg-amber-50/50 transition-colors flex items-start justify-between gap-4"
+                          className="w-full px-5 py-3 text-start hover:bg-amber-50/50 transition-colors flex items-start justify-between gap-4"
                         >
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-amber-950 break-words">
                               {sale.note}
                             </p>
                             <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                              <span className="font-mono tabular-nums">
-                                {formatSaleDateTime(sale.createdAt)}
+                              <span dir="ltr" className="ltr-isolate font-mono tabular-nums">
+                                {formatSaleDateTime(sale.createdAt, lang)}
                               </span>{' '}
                               · {itemsSummary}
                             </p>
                           </div>
-                          <span className="text-xs font-mono font-bold tabular-nums text-slate-950 whitespace-nowrap shrink-0">
-                            {formatCurrency(sale.totalAmount, currency)}
+                          <span
+                            dir="ltr"
+                            className="ltr-isolate text-xs font-mono font-bold tabular-nums text-slate-950 whitespace-nowrap shrink-0"
+                          >
+                            {formatCurrencyLocalized(sale.totalAmount, currency)}
                           </span>
                         </button>
                       );
@@ -777,14 +895,12 @@ export function ReportsView({
 
             {/* Full Store Backup Exports (hidden in printed reports) */}
             <section
-              aria-label="Full store backup exports"
-              className="print-hidden bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between gap-6 flex-wrap"
+              aria-label={t.reports.backupAria}
+              className="print-hidden bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between gap-4 flex-wrap"
             >
               <div>
-                <h2 className="text-sm font-bold text-slate-950">Full Store Backup (CSV)</h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Export complete catalog, sales history, and stock movement records for offline backup.
-                </p>
+                <h2 className="text-sm font-bold text-slate-950">{t.reports.backupTitle}</h2>
+                <p className="text-xs text-slate-500 mt-0.5">{t.reports.backupSubtitle}</p>
               </div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <button
@@ -795,10 +911,14 @@ export function ReportsView({
                       buildProductsBackupCsv(products, currency)
                     )
                   }
-                  className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                  className="min-h-[38px] px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
                   <Download className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-                  Products CSV ({formatNumber(products.length)})
+                  {t.reports.productsCsv} (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(products.length)}
+                  </span>
+                  )
                 </button>
                 <button
                   type="button"
@@ -808,10 +928,14 @@ export function ReportsView({
                       buildSalesBackupCsv(sales, currency)
                     )
                   }
-                  className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                  className="min-h-[38px] px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
                   <Download className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-                  Sales CSV ({formatNumber(sales.length)})
+                  {t.reports.salesCsv} (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(sales.length)}
+                  </span>
+                  )
                 </button>
                 <button
                   type="button"
@@ -821,10 +945,14 @@ export function ReportsView({
                       buildStockMovementsBackupCsv(movements, currency)
                     )
                   }
-                  className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
+                  className="min-h-[38px] px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
                   <Download className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-                  Stock Movements CSV ({formatNumber(movements.length)})
+                  {t.reports.movementsCsv} (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(movements.length)}
+                  </span>
+                  )
                 </button>
               </div>
             </section>
@@ -846,6 +974,9 @@ export function ReportsView({
         <ReceiptModal
           sale={receiptSale}
           shopName={shopName}
+          storeSubtitle={storeSubtitle}
+          receiptFooter={receiptFooter}
+          logoUrl={logoUrl}
           currency={currency}
           onClose={() => setReceiptSale(null)}
         />

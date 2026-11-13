@@ -210,12 +210,12 @@
         },
         "paymentMethod": {
           "type": "string",
-          "enum": ["cash"],
-          "description": "Always cash for counter sales."
+          "enum": ["cash", "fib", "card"],
+          "description": "Counter payment method: Cash, FIB, or FastPay / Card."
         },
         "note": {
           "type": "string",
-          "description": "Optional free-text note for end-of-day reconciliation (e.g. FIB transfer).",
+          "description": "Optional free-text note for sale details and end-of-day reconciliation.",
           "maxLength": 500
         },
         "status": {
@@ -265,15 +265,29 @@
         },
         "shopName": {
           "type": "string",
-          "description": "Name of the toy shop shown in the app header and printed labels.",
+          "description": "Name of the toy shop shown in the login screen, sidebar, labels, receipts, and reports.",
           "minLength": 1,
           "maxLength": 80
         },
+        "storeSubtitle": {
+          "type": "string",
+          "description": "Optional subtitle displayed under the store name in login and sidebar.",
+          "maxLength": 120
+        },
+        "receiptFooter": {
+          "type": "string",
+          "description": "Optional footer note or phone number printed on customer receipts.",
+          "maxLength": 240
+        },
+        "logoUrl": {
+          "type": "string",
+          "description": "Optional store logo PNG data URL or image URL.",
+          "maxLength": 200000
+        },
         "currency": {
           "type": "string",
-          "description": "Currency code or label shown next to prices (e.g. IQD).",
-          "minLength": 1,
-          "maxLength": 12
+          "enum": ["IQD", "USD"],
+          "description": "Display currency code (IQD or USD)."
         },
         "weekStartDay": {
           "type": "number",
@@ -311,8 +325,8 @@
         },
         "role": {
           "type": "string",
-          "enum": ["admin", "owner"],
-          "description": "Access role; both roles access all shop features, only admin manages users."
+          "enum": ["admin", "owner", "cashier"],
+          "description": "Access role: admin/owner have full access including Users & Store Settings; cashier has Sell & read-only Products."
         },
         "active": {
           "type": "boolean",

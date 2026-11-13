@@ -31,17 +31,17 @@ service cloud.firestore {
           isVerifiedSignedIn()
           && exists(userDocPath(userEmail()))
           && get(userDocPath(userEmail())).data.active == true
-          && get(userDocPath(userEmail())).data.role in ['admin', 'owner']
+          && get(userDocPath(userEmail())).data.role in ['admin', 'owner', 'cashier']
         );
     }
 
-    function isAdmin() {
+    function isManager() {
       return isBootstrapAdmin()
         || (
           isVerifiedSignedIn()
           && exists(userDocPath(userEmail()))
           && get(userDocPath(userEmail())).data.active == true
-          && get(userDocPath(userEmail())).data.role == 'admin'
+          && get(userDocPath(userEmail())).data.role in ['admin', 'owner']
         );
     }
 
@@ -96,7 +96,7 @@ service cloud.firestore {
           'updatedAt'
         ])
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
-        && data.role in ['admin', 'owner']
+        && data.role in ['admin', 'owner', 'cashier']
         && data.active is bool
         && data.createdAt is timestamp
         && (!('updatedAt' in data) || data.updatedAt is timestamp);
@@ -270,7 +270,7 @@ service cloud.firestore {
         && (data.totalAmount is int || data.totalAmount is float) && data.totalAmount >= 0 && data.totalAmount <= 100000000000
         && (data.totalCost is int || data.totalCost is float) && data.totalCost >= 0 && data.totalCost <= 100000000000
         && data.itemCount is int && data.itemCount >= 1 && data.itemCount <= 1000000
-        && data.paymentMethod == 'cash'
+        && data.paymentMethod in ['cash', 'fib', 'card']
         && isOptionalString(data, 'note', 500)
         && data.status in ['completed', 'voided']
         && data.createdAt is timestamp
@@ -289,6 +289,9 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'ownerId',
           'shopName',
+          'storeSubtitle',
+          'receiptFooter',
+          'logoUrl',
           'currency',
           'weekStartDay',
           'createdAt',
@@ -296,7 +299,10 @@ service cloud.firestore {
         ])
         && isValidId(data.ownerId)
         && data.shopName is string && data.shopName.size() >= 1 && data.shopName.size() <= 80
-        && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 12
+        && isOptionalString(data, 'storeSubtitle', 120)
+        && isOptionalString(data, 'receiptFooter', 240)
+        && isOptionalString(data, 'logoUrl', 200000)
+        && data.currency in ['IQD', 'USD']
         && (!('weekStartDay' in data) || (data.weekStartDay is int && data.weekStartDay >= 0 && data.weekStartDay <= 6))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -305,21 +311,24 @@ service cloud.firestore {
     match /users/{emailId} {
       allow get: if isActiveShopUser()
         && isValidEmailId(emailId)
-        && (emailId == userEmail() || isAdmin());
+        && (emailId == userEmail() || isManager());
 
-      allow list: if isAdmin();
+      allow list: if isManager();
 
-      allow create: if isAdmin()
+      allow create: if isManager()
         && isValidEmailId(emailId)
         && isValidUser(incoming())
         && incoming().createdAt == request.time
         && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time);
 
-      allow update: if isAdmin()
+      allow update: if isManager()
         && isValidEmailId(emailId)
         && isValidUser(incoming())
         && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
-        && !(emailId == userEmail() && (incoming().role != 'admin' || incoming().active != true))
+        && (
+          !(emailId == userEmail() && (incoming().role != existing().role || incoming().active != true))
+          || (isBootstrapAdmin() && emailId == userEmail() && incoming().role == 'admin' && incoming().active == true)
+        )
         && (
           (
             'createdAt' in existing()
@@ -355,7 +364,7 @@ service cloud.firestore {
 
       allow list: if isActiveShopUser();
 
-      allow create: if isActiveShopUser()
+      allow create: if isManager()
         && isValidId(productId)
         && isValidProduct(incoming())
         && incoming().ownerId == request.auth.uid
@@ -369,34 +378,39 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
+          (
+            isManager()
+            && (
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'name',
+                'barcode',
+                'category',
+                'sellingPrice',
+                'costPrice',
+                'quantityInStock',
+                'reorderLevel',
+                'photos',
+                'brand',
+                'ageRange',
+                'supplier',
+                'variantLabel',
+                'notes',
+                'isArchived',
+                'updatedAt'
+              ]) ||
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'quantityInStock',
+                'costPrice',
+                'updatedAt'
+              ]) ||
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'isArchived',
+                'updatedAt'
+              ])
+            )
+          ) ||
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'name',
-            'barcode',
-            'category',
-            'sellingPrice',
-            'costPrice',
             'quantityInStock',
-            'reorderLevel',
-            'photos',
-            'brand',
-            'ageRange',
-            'supplier',
-            'variantLabel',
-            'notes',
-            'isArchived',
-            'updatedAt'
-          ]) ||
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'quantityInStock',
-            'costPrice',
-            'updatedAt'
-          ]) ||
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'quantityInStock',
-            'updatedAt'
-          ]) ||
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'isArchived',
             'updatedAt'
           ])
         );
@@ -405,12 +419,13 @@ service cloud.firestore {
     }
 
     match /stockMovements/{movementId} {
-      allow get: if isActiveShopUser()
+      allow get: if isManager()
         && isValidId(movementId);
 
-      allow list: if isActiveShopUser();
+      allow list: if isManager();
 
       allow create: if isActiveShopUser()
+        && (isManager() || incoming().type in ['sale', 'void'])
         && isValidId(movementId)
         && isValidStockMovement(incoming())
         && incoming().ownerId == request.auth.uid
@@ -423,7 +438,8 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.updatedAt == request.time
           ) ||
           (
-            !exists(/databases/$(database)/documents/products/$(incoming().productId))
+            isManager()
+            && !exists(/databases/$(database)/documents/products/$(incoming().productId))
             && existsAfter(/databases/$(database)/documents/products/$(incoming().productId))
             && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.ownerId == request.auth.uid
             && getAfter(/databases/$(database)/documents/products/$(incoming().productId)).data.quantityInStock == incoming().quantityChange
@@ -473,14 +489,14 @@ service cloud.firestore {
 
       allow list: if isActiveShopUser();
 
-      allow create: if isActiveShopUser()
+      allow create: if isManager()
         && isValidId(settingId)
         && isValidShopSettings(incoming())
         && incoming().ownerId == request.auth.uid
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
-      allow update: if isActiveShopUser()
+      allow update: if isManager()
         && isValidId(settingId)
         && isValidShopSettings(incoming())
         && incoming().ownerId == existing().ownerId
@@ -488,6 +504,9 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'shopName',
+          'storeSubtitle',
+          'receiptFooter',
+          'logoUrl',
           'currency',
           'weekStartDay',
           'updatedAt'

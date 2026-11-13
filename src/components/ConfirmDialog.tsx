@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { useTranslation } from '../contexts/I18nContext';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -19,13 +20,15 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
-  cancelLabel = 'Cancel',
+  cancelLabel,
   tone = 'danger',
   isBusy = false,
   errorMessage = null,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  const resolvedCancelLabel = cancelLabel ?? t.common.cancel;
   const titleId = useId();
   const descId = useId();
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
@@ -57,10 +60,10 @@ export function ConfirmDialog({
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descId}
-      className="fixed inset-0 z-50 bg-slate-950/50 flex items-center justify-center p-6"
+      className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-xs modal-backdrop-enter flex items-center justify-center p-4 sm:p-6"
     >
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-4">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-md overflow-hidden modal-panel-enter text-start">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-200 flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <div
               className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
@@ -79,14 +82,14 @@ export function ConfirmDialog({
             type="button"
             disabled={isBusy}
             onClick={onCancel}
-            aria-label="Close confirmation dialog"
-            className="w-8 h-8 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 disabled:opacity-50 flex items-center justify-center shrink-0"
+            aria-label={t.common.closeDialogAria}
+            className="w-9 h-9 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 disabled:opacity-50 flex items-center justify-center shrink-0"
           >
             <X className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-4 sm:p-6 space-y-4">
           <p id={descId} className="text-sm text-slate-700 leading-relaxed">
             {description}
           </p>
@@ -101,27 +104,27 @@ export function ConfirmDialog({
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-3">
+        <div className="px-4 sm:px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-3">
           <button
             ref={cancelBtnRef}
             type="button"
             disabled={isBusy}
             onClick={onCancel}
-            className="h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+            className="min-h-[40px] px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-100 active:scale-[0.98] transition-all disabled:opacity-60 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           <button
             type="button"
             disabled={isBusy}
             onClick={() => void onConfirm()}
-            className={`h-10 px-4 rounded-lg text-sm font-semibold text-white disabled:opacity-60 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 ${
+            className={`min-h-[40px] px-4 rounded-lg text-sm font-semibold text-white active:scale-[0.98] transition-all disabled:opacity-60 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 ${
               isDanger
                 ? 'bg-red-700 hover:bg-red-800 focus-visible:outline-red-700'
                 : 'bg-slate-900 hover:bg-slate-800 focus-visible:outline-blue-600'
             }`}
           >
-            {isBusy ? 'Working...' : confirmLabel}
+            {isBusy ? t.common.working : confirmLabel}
           </button>
         </div>
       </div>

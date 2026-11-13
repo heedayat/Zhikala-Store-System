@@ -1,4 +1,5 @@
 import type { AppUser, UserRole } from '../types/inventory';
+import { getTranslations, type AppLanguage } from './i18n';
 
 export const BOOTSTRAP_ADMIN_EMAIL = 'gamerhidayatgamer@gmail.com';
 export const INITIAL_OWNER_EMAIL = 'shakarawat007@gmail.com';
@@ -17,15 +18,33 @@ export function isValidEmailAddress(rawEmail: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+export function isManagerRole(role: string | null | undefined): role is 'admin' | 'owner' {
+  return role === 'admin' || role === 'owner';
+}
+
+export function isValidUserRole(role: string | null | undefined): role is UserRole {
+  return role === 'admin' || role === 'owner' || role === 'cashier';
+}
+
+export function getUserRoleLabel(role: UserRole): string {
+  if (role === 'admin') return 'Admin';
+  if (role === 'owner') return 'Owner';
+  return 'Cashier';
+}
+
 export function isAuthorizedUserRecord(
   user: Pick<AppUser, 'active' | 'role'> | null | undefined
 ): boolean {
   if (!user) return false;
-  return user.active === true && (user.role === 'admin' || user.role === 'owner');
+  return user.active === true && isValidUserRole(user.role);
 }
 
 export function countActiveAdmins(users: Pick<AppUser, 'active' | 'role'>[]): number {
   return users.filter((u) => u.active && u.role === 'admin').length;
+}
+
+export function countActiveManagers(users: Pick<AppUser, 'active' | 'role'>[]): number {
+  return users.filter((u) => u.active && isManagerRole(u.role)).length;
 }
 
 export interface NewUserValidationErrors {
@@ -50,29 +69,31 @@ export type NewUserValidationResult =
 
 export function validateNewUserForm(
   input: { email: string; displayName: string; role: string },
-  existingUsers: Pick<AppUser, 'email'>[]
+  existingUsers: Pick<AppUser, 'email'>[],
+  lang: AppLanguage = 'en'
 ): NewUserValidationResult {
+  const v = getTranslations(lang).validation;
   const errors: NewUserValidationErrors = {};
   const email = normalizeEmail(input.email);
   const displayName = input.displayName.trim();
   const role = input.role;
 
   if (!email) {
-    errors.email = 'Google email address is required.';
+    errors.email = v.emailRequired;
   } else if (!isValidEmailAddress(email)) {
-    errors.email = 'Enter a valid email address (for example, name@gmail.com).';
+    errors.email = v.emailInvalid;
   } else if (existingUsers.some((u) => normalizeEmail(u.email) === email)) {
-    errors.email = 'A user with this email address already exists.';
+    errors.email = v.emailDuplicate;
   }
 
   if (!displayName) {
-    errors.displayName = 'Name is required.';
+    errors.displayName = v.userNameRequired;
   } else if (displayName.length > 80) {
-    errors.displayName = 'Name must be 80 characters or fewer.';
+    errors.displayName = v.userNameMax;
   }
 
-  if (role !== 'admin' && role !== 'owner') {
-    errors.role = 'Choose either admin or owner.';
+  if (!isValidUserRole(role)) {
+    errors.role = v.userRoleInvalid;
   }
 
   if (Object.keys(errors).length > 0) {
@@ -98,19 +119,47 @@ export function canModifyUserRole(
   targetUser: Pick<AppUser, 'email' | 'role' | 'active'>,
   nextRole: UserRole,
   currentUserEmail: string,
-  allUsers: Pick<AppUser, 'email' | 'role' | 'active'>[]
+  allUsers: Pick<AppUser, 'email' | 'role' | 'active'>[],
+  lang: AppLanguage = 'en'
 ): GuardResult {
   if (targetUser.role === nextRole) {
     return { allowed: true };
   }
 
+  const v = getTranslations(lang).validation;
   const normalizedTarget = normalizeEmail(targetUser.email);
   const normalizedSelf = normalizeEmail(currentUserEmail);
 
-  if (normalizedTarget === normalizedSelf && nextRole !== 'admin') {
+  if (normalizedTarget === normalizedSelf) {
+    if (nextRole === 'cashier') {
+      return {
+        allowed: false,
+        reason: v.cannotDemoteSelfCashier,
+      };
+    }
+    if (targetUser.role === 'admin' && nextRole !== 'admin') {
+      return {
+        allowed: false,
+        reason: v.cannotRemoveOwnAdmin,
+      };
+    }
+    if (targetUser.role === 'owner' && nextRole === 'admin') {
+      return {
+        allowed: false,
+        reason: v.askAnotherAdmin,
+      };
+    }
+  }
+
+  if (
+    targetUser.active &&
+    isManagerRole(targetUser.role) &&
+    nextRole === 'cashier' &&
+    countActiveManagers(allUsers) <= 1
+  ) {
     return {
       allowed: false,
-      reason: 'You cannot remove your own admin access.',
+      reason: v.lastActiveManagerRole,
     };
   }
 
@@ -122,7 +171,7 @@ export function canModifyUserRole(
   ) {
     return {
       allowed: false,
-      reason: 'At least one active admin must remain.',
+      reason: v.lastActiveAdminRole,
     };
   }
 
@@ -133,11 +182,14 @@ export function canToggleUserActive(
   targetUser: Pick<AppUser, 'email' | 'role' | 'active'>,
   nextActive: boolean,
   currentUserEmail: string,
-  allUsers: Pick<AppUser, 'email' | 'role' | 'active'>[]
+  allUsers: Pick<AppUser, 'email' | 'role' | 'active'>[],
+  lang: AppLanguage = 'en'
 ): GuardResult {
   if (targetUser.active === nextActive) {
     return { allowed: true };
   }
+
+  const v = getTranslations(lang).validation;
 
   if (!nextActive) {
     const normalizedTarget = normalizeEmail(targetUser.email);
@@ -146,18 +198,18 @@ export function canToggleUserActive(
     if (normalizedTarget === normalizedSelf) {
       return {
         allowed: false,
-        reason: 'You cannot deactivate your own account.',
+        reason: v.cannotDeactivateSelf,
       };
     }
 
     if (
-      targetUser.role === 'admin' &&
+      isManagerRole(targetUser.role) &&
       targetUser.active &&
-      countActiveAdmins(allUsers) <= 1
+      countActiveManagers(allUsers) <= 1
     ) {
       return {
         allowed: false,
-        reason: 'Cannot deactivate the last active admin.',
+        reason: v.lastActiveManagerDeactivate,
       };
     }
   }

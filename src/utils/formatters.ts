@@ -7,13 +7,25 @@ export interface ProductFilters {
   showArchived: boolean;
 }
 
-export function formatCurrency(amount: number, currency = 'IQD'): string {
-  const safeAmount = Number.isFinite(amount) ? Math.round(amount) : 0;
+export function formatCurrency(amount: number, currency = 'IQD', lang: 'en' | 'ku' = 'en'): string {
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  const cleanCurrency = currency.trim() || 'IQD';
+  if (cleanCurrency.toUpperCase() === 'USD') {
+    const roundedUsd = Math.round(safeAmount * 100) / 100;
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(roundedUsd);
+  }
+  const wholeAmount = Math.round(safeAmount);
   const formattedNumber = new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 0,
-  }).format(safeAmount);
-  const cleanCurrency = currency.trim() || 'IQD';
-  return `${formattedNumber} ${cleanCurrency}`;
+  }).format(wholeAmount);
+  const displayCurrency =
+    cleanCurrency.toUpperCase() === 'IQD' && lang === 'ku' ? 'د.ع' : cleanCurrency;
+  return `${formattedNumber} ${displayCurrency}`;
 }
 
 export function formatNumber(value: number): string {
@@ -151,4 +163,23 @@ export function formatActionError(error: unknown, fallbackMessage: string): stri
   }
 
   return extracted || fallbackMessage;
+}
+
+export const MAX_LOGO_URL_LENGTH = 200_000;
+
+export function normalizeLogoUrl(raw: string | null | undefined): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return '';
+  if (trimmed.length > MAX_LOGO_URL_LENGTH) {
+    return '';
+  }
+  if (
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('/')
+  ) {
+    return trimmed;
+  }
+  return '';
 }

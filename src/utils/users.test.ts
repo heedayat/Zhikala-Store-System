@@ -5,8 +5,10 @@ import {
   canModifyUserRole,
   canToggleUserActive,
   countActiveAdmins,
+  countActiveManagers,
   isAuthorizedUserRecord,
   isBootstrapAdminEmail,
+  isManagerRole,
   normalizeEmail,
   validateNewUserForm,
 } from './users';
@@ -140,5 +142,61 @@ test('blocks removing own admin access or deactivating self or last active admin
   assert.equal(
     canModifyUserRole(onlyOtherAdmin[0], 'owner', 'actor@gmail.com', onlyOtherAdmin).allowed,
     false
+  );
+});
+
+test('supports cashier role creation, manager role checks, and last Admin/Owner guards', () => {
+  const cashierResult = validateNewUserForm(
+    { email: '  Cashier1@Gmail.com ', displayName: 'Noor', role: 'cashier' },
+    seedUsers
+  );
+  assert.equal(cashierResult.valid, true);
+  if (cashierResult.valid) {
+    assert.equal(cashierResult.data.role, 'cashier');
+  }
+
+  assert.equal(isManagerRole('admin'), true);
+  assert.equal(isManagerRole('owner'), true);
+  assert.equal(isManagerRole('cashier'), false);
+  assert.equal(
+    isAuthorizedUserRecord({ active: true, role: 'cashier' }),
+    true
+  );
+
+  // Owner cannot self-demote to cashier
+  const ownerSelfDemote = canModifyUserRole(
+    seedUsers[1],
+    'cashier',
+    'shakarawat007@gmail.com',
+    seedUsers
+  );
+  assert.equal(ownerSelfDemote.allowed, false);
+
+  // Cannot deactivate or demote to cashier the last active Admin/Owner
+  const singleOwnerPlusCashier: AppUser[] = [
+    { email: 'owner@shop.com', displayName: 'Sole Owner', role: 'owner', active: true },
+    { email: 'cashier@shop.com', displayName: 'Cashier', role: 'cashier', active: true },
+  ];
+  assert.equal(countActiveManagers(singleOwnerPlusCashier), 1);
+  assert.equal(
+    canToggleUserActive(singleOwnerPlusCashier[0], false, 'other@shop.com', singleOwnerPlusCashier)
+      .allowed,
+    false
+  );
+  assert.equal(
+    canModifyUserRole(
+      singleOwnerPlusCashier[0],
+      'cashier',
+      'other@shop.com',
+      singleOwnerPlusCashier
+    ).allowed,
+    false
+  );
+
+  // Cashier CAN be deactivated freely
+  assert.equal(
+    canToggleUserActive(singleOwnerPlusCashier[1], false, 'owner@shop.com', singleOwnerPlusCashier)
+      .allowed,
+    true
   );
 });

@@ -9,6 +9,7 @@ import {
   formatActionError,
   formatCurrency,
   isLowStock,
+  normalizeLogoUrl,
 } from './formatters';
 
 const sampleProducts: Product[] = [
@@ -55,11 +56,14 @@ const sampleProducts: Product[] = [
   },
 ];
 
-test('formatCurrency formats whole numbers with thousands separators and currency code', () => {
+test('formatCurrency formats whole IQD numbers and USD decimals cleanly', () => {
   assert.equal(formatCurrency(25000, 'IQD'), '25,000 IQD');
   assert.equal(formatCurrency(1250000, 'IQD'), '1,250,000 IQD');
   assert.equal(formatCurrency(0, 'IQD'), '0 IQD');
   assert.equal(formatCurrency(1499.6, 'IQD'), '1,500 IQD');
+  assert.equal(formatCurrency(25, 'USD'), '$25.00');
+  assert.equal(formatCurrency(19.99, 'USD'), '$19.99');
+  assert.equal(formatCurrency(1250.5, 'USD'), '$1,250.50');
 });
 
 test('isLowStock flags items at or below reorderLevel only when reorderLevel is set', () => {
@@ -156,3 +160,16 @@ test('formatActionError converts Firestore JSON errors into readable messages', 
   assert.match(formatActionError(new Error('Firebase: Error (auth/unauthorized-domain).'), 'Fallback'), /Authorized domains/i);
   assert.equal(formatActionError(null, 'Something went wrong'), 'Something went wrong');
 });
+
+test('normalizeLogoUrl accepts safe image data URLs, http(s) URLs, and /logo.png while rejecting unsafe values', () => {
+  assert.equal(normalizeLogoUrl('  /logo.png  '), '/logo.png');
+  assert.equal(normalizeLogoUrl('https://example.com/logo.png'), 'https://example.com/logo.png');
+  assert.equal(normalizeLogoUrl('http://localhost:3000/logo.png'), 'http://localhost:3000/logo.png');
+  assert.equal(normalizeLogoUrl('data:image/png;base64,iVBORw0KGgo='), 'data:image/png;base64,iVBORw0KGgo=');
+  assert.equal(normalizeLogoUrl('javascript:alert(1)'), '');
+  assert.equal(normalizeLogoUrl('logo.png'), '');
+  assert.equal(normalizeLogoUrl('   '), '');
+  assert.equal(normalizeLogoUrl(null), '');
+  assert.equal(normalizeLogoUrl(`https://example.com/${'a'.repeat(200_005)}`), '');
+});
+

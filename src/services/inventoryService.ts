@@ -13,6 +13,7 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, handleFirestoreError, OperationType, storage } from '../firebase';
 import type {
   AppUser,
+  PaymentMethod,
   Product,
   Sale,
   SaleLineItem,
@@ -23,13 +24,16 @@ import type {
   UserRole,
 } from '../types/inventory';
 import type { ValidatedProductPayload } from '../utils/productValidation';
+import { normalizeLogoUrl } from '../utils/formatters';
 import { DEFAULT_WEEK_START_DAY, normalizeWeekStartDay } from '../utils/reports';
+import { normalizePaymentMethod } from '../utils/sales';
 import type { ValidatedStockAdjustment } from '../utils/stockMovements';
 import {
   BOOTSTRAP_ADMIN_EMAIL,
   INITIAL_OWNER_EMAIL,
   isAuthorizedUserRecord,
   isBootstrapAdminEmail,
+  isValidUserRole,
   normalizeEmail,
 } from '../utils/users';
 
@@ -58,13 +62,13 @@ export function generateDocumentId(): string {
 
 function parseUserDoc(emailId: string, data: Record<string, unknown>): AppUser {
   const rawRole = String(data.role ?? '');
-  const role: UserRole = rawRole === 'admin' ? 'admin' : 'owner';
+  const role: UserRole = isValidUserRole(rawRole) ? rawRole : 'cashier';
   const tsCreated = data.createdAt as { toDate?: () => Date } | undefined;
   const tsUpdated = data.updatedAt as { toDate?: () => Date } | undefined;
   return {
     email: normalizeEmail(emailId),
     displayName: String(data.displayName ?? ''),
-    role: rawRole === 'admin' || rawRole === 'owner' ? role : 'owner',
+    role,
     active: Boolean(data.active),
     createdAt: tsCreated?.toDate ? tsCreated.toDate() : null,
     updatedAt: tsUpdated?.toDate ? tsUpdated.toDate() : null,
@@ -184,7 +188,7 @@ export function subscribeToCurrentUserAccess(
       const data = snapshot.data() as Record<string, unknown>;
       const rawRole = String(data.role ?? '');
       const record = parseUserDoc(snapshot.id, data);
-      if ((rawRole !== 'admin' && rawRole !== 'owner') || !isAuthorizedUserRecord(record)) {
+      if (!isValidUserRole(rawRole) || !isAuthorizedUserRecord(record)) {
         if (isBootstrap) {
           void ensureBootstrapShopUsers(emailId, fallbackDisplayName).catch(() => {});
           onAuthorized({
@@ -233,9 +237,10 @@ export function subscribeToAllUsers(
       const list: AppUser[] = snapshot.docs.map((docSnap) =>
         parseUserDoc(docSnap.id, docSnap.data() as Record<string, unknown>)
       );
+      const roleRank: Record<UserRole, number> = { admin: 0, owner: 1, cashier: 2 };
       list.sort((a, b) => {
         if (a.active !== b.active) return a.active ? -1 : 1;
-        if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+        if (a.role !== b.role) return roleRank[a.role] - roleRank[b.role];
         return a.email.localeCompare(b.email);
       });
       onData(list);
@@ -428,7 +433,7 @@ export function subscribeToSales(
           totalAmount: Number(data.totalAmount ?? 0),
           totalCost: Number(data.totalCost ?? 0),
           itemCount: Number(data.itemCount ?? 0),
-          paymentMethod: 'cash',
+          paymentMethod: normalizePaymentMethod(data.paymentMethod),
           note: data.note ? String(data.note) : '',
           status: data.status === 'voided' ? 'voided' : 'completed',
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(),
@@ -467,8 +472,11 @@ export function subscribeToShopSettings(
       const data = match.data();
       onData({
         ownerId: String(data.ownerId ?? fallbackOwnerId),
-        shopName: String(data.shopName ?? 'Toybox'),
-        currency: String(data.currency ?? 'IQD'),
+        shopName: String(data.shopName ?? 'Little Wonders'),
+        storeSubtitle: typeof data.storeSubtitle === 'string' ? data.storeSubtitle : '',
+        receiptFooter: typeof data.receiptFooter === 'string' ? data.receiptFooter : '',
+        logoUrl: normalizeLogoUrl(data.logoUrl),
+        currency: String(data.currency ?? '').toUpperCase() === 'USD' ? 'USD' : 'IQD',
         weekStartDay: normalizeWeekStartDay(
           typeof data.weekStartDay === 'number' ? data.weekStartDay : DEFAULT_WEEK_START_DAY
         ),
@@ -486,21 +494,32 @@ export function subscribeToShopSettings(
 
 export async function saveShopSettings(
   ownerId: string,
-  shopName: string,
-  currency: string,
-  weekStartDay: number,
+  input: {
+    shopName: string;
+    storeSubtitle: string;
+    receiptFooter: string;
+    logoUrl?: string;
+    currency: string;
+    weekStartDay: number;
+  },
   hasExistingSettings: boolean
 ): Promise<void> {
   const path = `${SETTINGS_COLLECTION}/${SHOP_SETTINGS_DOC_ID}`;
   const docRef = doc(db, SETTINGS_COLLECTION, SHOP_SETTINGS_DOC_ID);
-  const cleanName = shopName.trim().slice(0, 80) || 'Toybox';
-  const cleanCurrency = currency.trim().slice(0, 12) || 'IQD';
-  const cleanWeekStart = normalizeWeekStartDay(weekStartDay);
+  const cleanName = input.shopName.trim().slice(0, 80) || 'Little Wonders';
+  const cleanSubtitle = input.storeSubtitle.trim().slice(0, 120);
+  const cleanReceiptFooter = input.receiptFooter.trim().slice(0, 240);
+  const cleanLogoUrl = normalizeLogoUrl(input.logoUrl);
+  const cleanCurrency = input.currency.trim().toUpperCase() === 'USD' ? 'USD' : 'IQD';
+  const cleanWeekStart = normalizeWeekStartDay(input.weekStartDay);
 
   try {
     if (hasExistingSettings) {
       await updateDoc(docRef, {
         shopName: cleanName,
+        storeSubtitle: cleanSubtitle,
+        receiptFooter: cleanReceiptFooter,
+        logoUrl: cleanLogoUrl,
         currency: cleanCurrency,
         weekStartDay: cleanWeekStart,
         updatedAt: serverTimestamp(),
@@ -509,6 +528,9 @@ export async function saveShopSettings(
       await setDoc(docRef, {
         ownerId,
         shopName: cleanName,
+        storeSubtitle: cleanSubtitle,
+        receiptFooter: cleanReceiptFooter,
+        logoUrl: cleanLogoUrl,
         currency: cleanCurrency,
         weekStartDay: cleanWeekStart,
         createdAt: serverTimestamp(),
@@ -695,7 +717,8 @@ export async function recordStockAdjustment(
 export async function completeSaleTransaction(
   ownerId: string,
   lineItems: SaleLineItem[],
-  note: string
+  note: string,
+  paymentMethod: PaymentMethod = 'cash'
 ): Promise<string> {
   if (lineItems.length === 0) {
     throw new StockTransactionError('Add at least one item before completing the sale.');
@@ -705,6 +728,7 @@ export async function completeSaleTransaction(
   const saleRef = doc(db, SALES_COLLECTION, saleId);
   const path = `${SALES_COLLECTION}/${saleId}`;
   const cleanNote = note.trim().slice(0, 500);
+  const cleanPaymentMethod = normalizePaymentMethod(paymentMethod);
 
   // Aggregate quantities per productId so each product doc is read & updated once
   const qtyByProduct = new Map<string, { quantity: number; fallbackName: string }>();
@@ -744,7 +768,7 @@ export async function completeSaleTransaction(
 
       const finalItems: SaleLineItem[] = lineItems.map((item) => {
         const live = productSnaps.get(item.productId)!;
-        const unitPrice = Math.max(0, Math.round(item.unitPrice));
+        const unitPrice = Math.max(0, Math.round(item.unitPrice * 100) / 100);
         return {
           productId: item.productId,
           productName: live.name || item.productName,
@@ -753,12 +777,14 @@ export async function completeSaleTransaction(
           listPrice: live.sellingPrice,
           unitPrice,
           costPrice: live.costPrice,
-          lineTotal: item.quantity * unitPrice,
+          lineTotal: Math.round(item.quantity * unitPrice * 100) / 100,
         };
       });
 
-      const totalAmount = finalItems.reduce((sum, i) => sum + i.lineTotal, 0);
-      const totalCost = finalItems.reduce((sum, i) => sum + i.quantity * i.costPrice, 0);
+      const totalAmount =
+        Math.round(finalItems.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
+      const totalCost =
+        Math.round(finalItems.reduce((sum, i) => sum + i.quantity * i.costPrice, 0) * 100) / 100;
       const itemCount = finalItems.reduce((sum, i) => sum + i.quantity, 0);
 
       const saleDoc: Record<string, unknown> = {
@@ -767,7 +793,7 @@ export async function completeSaleTransaction(
         totalAmount,
         totalCost,
         itemCount,
-        paymentMethod: 'cash',
+        paymentMethod: cleanPaymentMethod,
         status: 'completed',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

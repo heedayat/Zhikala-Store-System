@@ -1,6 +1,8 @@
 import { useId, useRef, useState } from 'react';
 import { Image as ImageIcon, Loader2, Star, Trash2, Upload } from 'lucide-react';
+import { useTranslation } from '../contexts/I18nContext';
 import { compressProductImage } from '../utils/imageCompression';
+import { interpolate } from '../utils/i18n';
 import {
   MAX_INLINE_PHOTOS,
   tryUploadProductPhotoToStorage,
@@ -23,6 +25,7 @@ export function ProductPhotoUploader({
   isPreviewMode,
   onBusyChange,
 }: ProductPhotoUploaderProps) {
+  const { t } = useTranslation();
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -40,7 +43,7 @@ export function ProductPhotoUploader({
     const files = Array.from(fileList);
     const remainingSlots = Math.max(0, maxAllowed - photos.length);
     if (remainingSlots === 0) {
-      setUploadNotice(`Maximum ${maxAllowed} photos reached for this product.`);
+      setUploadNotice(interpolate(t.productForm.maxPhotosReached, { max: maxAllowed }));
       return;
     }
 
@@ -75,7 +78,7 @@ export function ProductPhotoUploader({
 
         // Enforce 4-photo limit when storing compressed JPEG versions inline
         if (photos.length + addedUrls.length >= MAX_INLINE_PHOTOS) {
-          errors.push(`Compressed storage is limited to ${MAX_INLINE_PHOTOS} photos per product.`);
+          errors.push(interpolate(t.productForm.inlineLimitError, { max: MAX_INLINE_PHOTOS }));
           break;
         }
         addedUrls.push(compressed.dataUrl);
@@ -92,9 +95,11 @@ export function ProductPhotoUploader({
       setUploadNotice(errors[0]);
     } else if (skippedCount > 0) {
       setUploadNotice(
-        `Added ${addedUrls.length} photo(s). ${skippedCount} skipped due to the ${
-          fellBackToInline ? MAX_INLINE_PHOTOS : maxAllowed
-        }-photo limit.`
+        interpolate(t.productForm.skippedPhotos, {
+          added: addedUrls.length,
+          skipped: skippedCount,
+          max: fellBackToInline ? MAX_INLINE_PHOTOS : maxAllowed,
+        })
       );
     }
 
@@ -119,12 +124,15 @@ export function ProductPhotoUploader({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1.5">
+      <div className="flex items-center justify-between mb-1.5 gap-2">
         <label htmlFor={inputId} className="block text-xs font-semibold text-slate-700">
-          Photos
+          {t.productForm.photos}
         </label>
         <span className="text-xs text-slate-500">
-          Compressed ~800px JPEG · {photos.length}/{maxAllowed} photos
+          {interpolate(t.productForm.photosHint, {
+            count: photos.length,
+            max: maxAllowed,
+          })}
         </span>
       </div>
 
@@ -164,15 +172,11 @@ export function ProductPhotoUploader({
                 <Upload className="w-4 h-4" aria-hidden="true" />
               )}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 text-start">
               <p className="text-sm font-medium text-slate-800">
-                {isProcessing
-                  ? 'Compressing and preparing photos...'
-                  : 'Drag and drop product photos here'}
+                {isProcessing ? t.productForm.compressingPhotos : t.productForm.dragDropPhotos}
               </p>
-              <p className="text-xs text-slate-500">
-                Select multiple files from your laptop at once
-              </p>
+              <p className="text-xs text-slate-500">{t.productForm.selectMultipleHint}</p>
             </div>
           </div>
 
@@ -182,7 +186,7 @@ export function ProductPhotoUploader({
             onClick={() => fileInputRef.current?.click()}
             className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600"
           >
-            Choose files
+            {t.productForm.chooseFiles}
           </button>
         </div>
 
@@ -196,12 +200,14 @@ export function ProductPhotoUploader({
                 {brokenIndices[idx] ? (
                   <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-400 p-2 text-center">
                     <ImageIcon className="w-5 h-5 mb-1" aria-hidden="true" />
-                    <span className="text-[11px]">Photo {idx + 1}</span>
+                    <span className="text-[11px]">
+                      {interpolate(t.productForm.photoFallbackLabel, { index: idx + 1 })}
+                    </span>
                   </div>
                 ) : (
                   <img
                     src={src}
-                    alt={`Product photo ${idx + 1}`}
+                    alt={interpolate(t.productForm.photoAlt, { index: idx + 1 })}
                     referrerPolicy="no-referrer"
                     onError={() =>
                       setBrokenIndices((prev) => ({
@@ -214,18 +220,18 @@ export function ProductPhotoUploader({
                 )}
 
                 {idx === 0 && (
-                  <span className="absolute left-1.5 top-1.5 px-1.5 py-0.5 rounded bg-slate-900/85 text-[10px] font-semibold text-white">
-                    Main
+                  <span className="absolute start-1.5 top-1.5 px-1.5 py-0.5 rounded bg-slate-900/85 text-[10px] font-semibold text-white">
+                    {t.productForm.mainBadge}
                   </span>
                 )}
 
-                <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <div className="absolute end-1.5 top-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                   {idx > 0 && (
                     <button
                       type="button"
                       onClick={() => handleSetCover(idx)}
-                      title="Make main photo"
-                      aria-label={`Set photo ${idx + 1} as main`}
+                      title={t.productForm.makeMainPhoto}
+                      aria-label={interpolate(t.productForm.setMainAria, { index: idx + 1 })}
                       className="w-7 h-7 rounded-md bg-white/95 border border-slate-200 text-slate-700 hover:text-amber-600 flex items-center justify-center shadow-xs"
                     >
                       <Star className="w-3.5 h-3.5" aria-hidden="true" />
@@ -234,8 +240,8 @@ export function ProductPhotoUploader({
                   <button
                     type="button"
                     onClick={() => handleRemove(idx)}
-                    title="Remove photo"
-                    aria-label={`Remove photo ${idx + 1}`}
+                    title={t.productForm.removePhoto}
+                    aria-label={interpolate(t.productForm.removePhotoAria, { index: idx + 1 })}
                     className="w-7 h-7 rounded-md bg-white/95 border border-slate-200 text-slate-700 hover:text-red-600 flex items-center justify-center shadow-xs"
                   >
                     <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />

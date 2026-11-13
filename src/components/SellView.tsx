@@ -14,13 +14,16 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { CartLineItem, Product, Sale, SaleLineItem } from '../types/inventory';
-import {
-  findProductByBarcode,
-  formatActionError,
-  formatCurrency,
-  formatNumber,
-} from '../utils/formatters';
+import { useTranslation } from '../contexts/I18nContext';
+import type {
+  CartLineItem,
+  PaymentMethod,
+  Product,
+  Sale,
+  SaleLineItem,
+} from '../types/inventory';
+import { findProductByBarcode, formatActionError, formatNumber } from '../utils/formatters';
+import { interpolate, type AppLanguage, type TranslationDictionary } from '../utils/i18n';
 import {
   addProductToCart,
   buildSaleLineItems,
@@ -29,15 +32,17 @@ import {
   filterSales,
   formatLocalYmd,
   formatSaleTime,
+  isDigitalPaymentMethod,
   isLineBelowCost,
   isLineExceedingStock,
+  PAYMENT_METHOD_OPTIONS,
   removeCartItem,
   stepCartItemQuantity,
   updateCartItemQuantity,
   updateCartItemUnitPrice,
 } from '../utils/sales';
-import { SaleDetailsModal } from './SaleDetailsModal';
 import { ReceiptModal } from './ReceiptModal';
+import { SaleDetailsModal } from './SaleDetailsModal';
 
 interface SellViewProps {
   products: Product[];
@@ -45,8 +50,16 @@ interface SellViewProps {
   isLoadingSales: boolean;
   loadError: string | null;
   shopName: string;
+  storeSubtitle?: string;
+  receiptFooter?: string;
+  logoUrl?: string;
   currency: string;
-  onCompleteSale: (lineItems: SaleLineItem[], note: string) => Promise<Sale>;
+  hideCostDetails?: boolean;
+  onCompleteSale: (
+    lineItems: SaleLineItem[],
+    note: string,
+    paymentMethod: PaymentMethod
+  ) => Promise<Sale>;
   onVoidSale: (saleId: string) => Promise<void>;
 }
 
@@ -54,6 +67,7 @@ interface CartRowProps {
   line: CartLineItem;
   liveProduct?: Product;
   currency: string;
+  hideCostDetails?: boolean;
   onStepQty: (productId: string, delta: number) => void;
   onChangeQty: (productId: string, qty: number) => void;
   onChangeUnitPrice: (productId: string, price: number) => void;
@@ -65,12 +79,14 @@ function CartRow({
   line,
   liveProduct,
   currency,
+  hideCostDetails = false,
   onStepQty,
   onChangeQty,
   onChangeUnitPrice,
   onRemove,
   onFocusScan,
 }: CartRowProps) {
+  const { t, formatCurrencyLocalized } = useTranslation();
   const [qtyDraft, setQtyDraft] = useState(String(line.quantity));
   const [priceDraft, setPriceDraft] = useState(String(line.unitPrice));
 
@@ -105,7 +121,7 @@ function CartRow({
     const raw = priceDraft.trim();
     const parsed = Number(raw);
     if (raw !== '' && Number.isFinite(parsed) && parsed >= 0) {
-      const rounded = Math.round(parsed);
+      const rounded = Math.round(parsed * 100) / 100;
       onChangeUnitPrice(line.productId, rounded);
       setPriceDraft(String(rounded));
     } else {
@@ -119,7 +135,7 @@ function CartRow({
       className="hover:bg-slate-50/70 transition-colors"
     >
       {/* Product */}
-      <td className="py-3 pl-5 pr-3 align-top">
+      <td className="py-3 ps-5 pe-3 align-top">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-lg border border-slate-200 bg-slate-100 overflow-hidden flex items-center justify-center shrink-0">
             {line.photo ? (
@@ -134,17 +150,21 @@ function CartRow({
             )}
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-950 leading-snug">
-              {line.productName}
-            </p>
+            <p className="text-sm font-semibold text-slate-950 leading-snug">{line.productName}</p>
             <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-xs text-slate-500">
               {line.variantLabel ? <span>{line.variantLabel} ·</span> : null}
-              <span className="font-mono tabular-nums">
-                {formatNumber(effectiveStock)} in stock
+              <span className="tabular-nums">
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatNumber(effectiveStock)}
+                </span>{' '}
+                {t.common.inStock}
               </span>
               {bargained ? (
-                <span className="font-mono tabular-nums text-slate-400">
-                  · List {formatCurrency(effectiveListPrice, currency)}
+                <span className="tabular-nums text-slate-400">
+                  · {t.sell.listPrefix}{' '}
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatCurrencyLocalized(effectiveListPrice, currency)}
+                  </span>
                 </span>
               ) : null}
             </div>
@@ -153,13 +173,22 @@ function CartRow({
                 {belowCost && (
                   <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                    <span>Below cost ({formatCurrency(effectiveCost, currency)})</span>
+                    <span>
+                      {hideCostDetails
+                        ? t.sell.belowMinCost
+                        : interpolate(t.sell.belowCost, {
+                            cost: formatCurrencyLocalized(effectiveCost, currency),
+                          })}
+                    </span>
                   </span>
                 )}
                 {exceedsStock && (
                   <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                    <span>Exceeds stock (goes to {formatNumber(projectedStock)})</span>
+                    <span>
+                      {t.sell.exceedsStock} (
+                      {interpolate(t.sell.goesToPrefix, { qty: formatNumber(projectedStock) })})
+                    </span>
                   </span>
                 )}
               </div>
@@ -170,23 +199,27 @@ function CartRow({
 
       {/* Quantity */}
       <td className="py-3 px-2 align-top w-28">
-        <div className="inline-flex items-center rounded-lg border border-slate-300 bg-white overflow-hidden">
+        <div
+          dir="ltr"
+          className="inline-flex items-center rounded-lg border border-slate-300 bg-white overflow-hidden"
+        >
           <button
             type="button"
             onClick={() => {
               onStepQty(line.productId, -1);
               onFocusScan();
             }}
-            aria-label={`Decrease quantity of ${line.productName}`}
+            aria-label={interpolate(t.sell.decreaseQtyAria, { name: line.productName })}
             className="w-7 h-9 flex items-center justify-center text-slate-600 hover:bg-slate-100 hover:text-slate-950 transition-colors"
           >
             <Minus className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
           <input
             type="number"
+            dir="ltr"
             min={1}
             step={1}
-            aria-label={`Quantity for ${line.productName}`}
+            aria-label={interpolate(t.sell.qtyForAria, { name: line.productName })}
             value={qtyDraft}
             onChange={(e) => {
               const next = e.target.value;
@@ -212,7 +245,7 @@ function CartRow({
               onStepQty(line.productId, 1);
               onFocusScan();
             }}
-            aria-label={`Increase quantity of ${line.productName}`}
+            aria-label={interpolate(t.sell.increaseQtyAria, { name: line.productName })}
             className="w-7 h-9 flex items-center justify-center text-slate-600 hover:bg-slate-100 hover:text-slate-950 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" aria-hidden="true" />
@@ -225,9 +258,10 @@ function CartRow({
         <div className="relative">
           <input
             type="number"
+            dir="ltr"
             min={0}
-            step={1}
-            aria-label={`Unit price for ${line.productName}`}
+            step={currency === 'USD' ? '0.01' : '1'}
+            aria-label={interpolate(t.sell.unitPriceForAria, { name: line.productName })}
             value={priceDraft}
             onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => {
@@ -235,7 +269,7 @@ function CartRow({
               setPriceDraft(next);
               const parsed = Number(next.trim());
               if (next.trim() !== '' && Number.isFinite(parsed) && parsed >= 0) {
-                onChangeUnitPrice(line.productId, Math.round(parsed));
+                onChangeUnitPrice(line.productId, Math.round(parsed * 100) / 100);
               }
             }}
             onBlur={commitPriceDraft}
@@ -246,7 +280,7 @@ function CartRow({
                 onFocusScan();
               }
             }}
-            className={`w-full h-9 px-2.5 rounded-lg border text-right text-sm font-mono font-semibold tabular-nums focus:outline-none focus:ring-2 ${
+            className={`ltr-isolate w-full h-9 px-2.5 rounded-lg border text-right text-sm font-mono font-semibold tabular-nums focus:outline-none focus:ring-2 ${
               belowCost
                 ? 'border-red-400 bg-red-50/40 text-red-900 focus:border-red-600 focus:ring-red-500/15'
                 : bargained
@@ -258,19 +292,21 @@ function CartRow({
       </td>
 
       {/* Line Total */}
-      <td className="py-3 px-2 align-top text-right font-mono font-bold text-sm tabular-nums text-slate-950 whitespace-nowrap pt-4 w-28">
-        {formatCurrency(lineTotal, currency)}
+      <td className="py-3 px-2 align-top text-end font-mono font-bold text-sm tabular-nums text-slate-950 whitespace-nowrap pt-4 w-28">
+        <span dir="ltr" className="ltr-isolate">
+          {formatCurrencyLocalized(lineTotal, currency)}
+        </span>
       </td>
 
       {/* Remove */}
-      <td className="py-3 pl-1 pr-4 align-top w-10 pt-3">
+      <td className="py-3 ps-1 pe-4 align-top w-10 pt-3">
         <button
           type="button"
           onClick={() => {
             onRemove(line.productId);
             onFocusScan();
           }}
-          aria-label={`Remove ${line.productName} from sale`}
+          aria-label={interpolate(t.sell.removeFromSaleAria, { name: line.productName })}
           className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50 flex items-center justify-center transition-colors"
         >
           <Trash2 className="w-4 h-4" aria-hidden="true" />
@@ -280,10 +316,21 @@ function CartRow({
   );
 }
 
-function getDateHeadingLabel(date: Date, todayYmd: string, yesterdayYmd: string): string {
+function getDateHeadingLabel(
+  date: Date,
+  todayYmd: string,
+  yesterdayYmd: string,
+  t: TranslationDictionary,
+  lang: AppLanguage
+): string {
   const ymd = formatLocalYmd(date);
-  if (ymd === todayYmd) return 'Today';
-  if (ymd === yesterdayYmd) return 'Yesterday';
+  if (ymd === todayYmd) return t.common.today;
+  if (ymd === yesterdayYmd) return t.common.yesterday;
+  if (lang === 'ku') {
+    const wd = t.weekdaysShort[date.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6];
+    const mo = t.monthsShort[date.getMonth() as keyof typeof t.monthsShort];
+    return `${wd}، ${date.getDate()} ${mo} ${date.getFullYear()}`;
+  }
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     month: 'short',
@@ -298,10 +345,15 @@ export function SellView({
   isLoadingSales,
   loadError,
   shopName,
+  storeSubtitle,
+  receiptFooter,
+  logoUrl,
   currency,
+  hideCostDetails = false,
   onCompleteSale,
   onVoidSale,
 }: SellViewProps) {
+  const { lang, t, formatCurrencyLocalized, paymentLabel } = useTranslation();
   const scanInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const clearConfirmBtnRef = useRef<HTMLButtonElement>(null);
@@ -312,11 +364,14 @@ export function SellView({
   const [scanFeedback, setScanFeedback] = useState<string | null>(null);
 
   const [cart, setCart] = useState<CartLineItem[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [saleNote, setSaleNote] = useState('');
   const [isCompleting, setIsCompleting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
+  const [mobileSubTab, setMobileSubTab] = useState<'pos' | 'history'>('pos');
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
 
   // History & Modals
   const [historyDateFilter, setHistoryDateFilter] = useState('');
@@ -325,6 +380,10 @@ export function SellView({
 
   const productMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
   const activeProducts = useMemo(() => products.filter((p) => !p.isArchived), [products]);
+  const cartQtyByProductId = useMemo(
+    () => new Map(cart.map((item) => [item.productId, item.quantity])),
+    [cart]
+  );
 
   const matchingProducts = useMemo(() => {
     const q = scanQuery.trim().toLowerCase();
@@ -369,13 +428,13 @@ export function SellView({
       } else {
         groups.push({
           ymd,
-          label: getDateHeadingLabel(sale.createdAt, todayYmd, yesterdayYmd),
+          label: getDateHeadingLabel(sale.createdAt, todayYmd, yesterdayYmd, t, lang),
           items: [sale],
         });
       }
     }
     return groups;
-  }, [filteredSales]);
+  }, [filteredSales, lang, t]);
 
   function focusScanInput() {
     scanInputRef.current?.focus();
@@ -426,15 +485,17 @@ export function SellView({
 
     try {
       const lineItems = buildSaleLineItems(cart, products);
-      const savedSale = await onCompleteSale(lineItems, saleNote);
+      const savedSale = await onCompleteSale(lineItems, saleNote, paymentMethod);
       setCart([]);
+      setPaymentMethod('cash');
       setSaleNote('');
       setScanQuery('');
       setScanFeedback(null);
       setConfirmClearOpen(false);
+      setMobileCartOpen(false);
       setLastCompletedSale(savedSale);
     } catch (err) {
-      setSubmitError(formatActionError(err, 'Failed to complete sale.'));
+      setSubmitError(formatActionError(err, t.auth.verifyErrorFallback));
     } finally {
       setIsCompleting(false);
       focusScanInput();
@@ -443,11 +504,13 @@ export function SellView({
 
   function confirmClearSale() {
     setCart([]);
+    setPaymentMethod('cash');
     setSaleNote('');
     setScanQuery('');
     setScanFeedback(null);
     setSubmitError(null);
     setConfirmClearOpen(false);
+    setMobileCartOpen(false);
     focusScanInput();
   }
 
@@ -533,9 +596,7 @@ export function SellView({
     // 2. Warn cleanly if scanned barcode belongs to an archived product
     const archivedMatch = findProductByBarcode(products, raw);
     if (archivedMatch && archivedMatch.isArchived) {
-      setScanFeedback(
-        `"${archivedMatch.name}" is archived. Unarchive it in Products before selling.`
-      );
+      setScanFeedback(interpolate(t.sell.archivedProductWarning, { name: archivedMatch.name }));
       setScanQuery('');
       setDropdownOpen(false);
       return;
@@ -548,7 +609,7 @@ export function SellView({
       return;
     }
 
-    setScanFeedback(`No active product matched "${raw}".`);
+    setScanFeedback(interpolate(t.sell.noActiveBarcodeMatch, { query: raw }));
     setScanQuery('');
     setDropdownOpen(false);
   }
@@ -556,52 +617,91 @@ export function SellView({
   const todayYmd = formatLocalYmd(new Date());
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-white">
+    <div className="flex-1 flex flex-col min-w-0 md:h-screen md:overflow-hidden bg-white">
       {/* Top Header */}
-      <header className="h-16 px-6 border-b border-slate-200 flex items-center justify-between gap-6 shrink-0 bg-white">
-        <div className="flex items-baseline gap-4 min-w-0">
+      <header className="min-h-16 px-4 md:px-6 py-3 md:py-0 border-b border-slate-200 flex items-center justify-between gap-4 shrink-0 bg-white">
+        <div className="flex items-baseline gap-3 min-w-0 flex-wrap">
           <h1 className="text-lg font-bold text-slate-950 tracking-tight whitespace-nowrap">
-            Sell
+            {t.sell.title}
           </h1>
-          <span className="text-xs text-slate-500 whitespace-nowrap">
-            Cash counter · Barcode &amp; keyboard ready
-          </span>
+          <span className="text-xs text-slate-500 whitespace-nowrap">{t.sell.subtitle}</span>
         </div>
 
-        <div className="flex items-center gap-4 text-xs text-slate-500 whitespace-nowrap">
+        <div className="hidden lg:flex items-center gap-4 text-xs text-slate-500 whitespace-nowrap">
           <span>
-            <kbd className="px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 font-mono text-[11px] text-slate-700">
+            <kbd
+              dir="ltr"
+              className="ltr-isolate px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 font-mono text-[11px] text-slate-700"
+            >
               Enter
             </kbd>{' '}
-            Confirm edit
+            {t.sell.kbdConfirm}
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 font-mono text-[11px] text-slate-700">
+            <kbd
+              dir="ltr"
+              className="ltr-isolate px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 font-mono text-[11px] text-slate-700"
+            >
               Ctrl+Enter
             </kbd>{' '}
-            Complete sale
+            {t.sell.kbdComplete}
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 font-mono text-[11px] text-slate-700">
+            <kbd
+              dir="ltr"
+              className="ltr-isolate px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 font-mono text-[11px] text-slate-700"
+            >
               Esc
             </kbd>{' '}
-            Clear
+            {t.sell.kbdClear}
           </span>
         </div>
       </header>
 
+      {/* Mobile POS / History Sub-navigation */}
+      <div className="md:hidden px-4 py-2.5 border-b border-slate-200 bg-slate-50/80 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setMobileSubTab('pos')}
+          className={`flex-1 min-h-[40px] px-3 rounded-lg text-xs font-semibold transition-all duration-150 active:scale-[0.98] ${
+            mobileSubTab === 'pos'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-white border border-slate-200 text-slate-700'
+          }`}
+        >
+          {t.sell.posTab}
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileSubTab('history')}
+          className={`flex-1 min-h-[40px] px-3 rounded-lg text-xs font-semibold transition-all duration-150 active:scale-[0.98] ${
+            mobileSubTab === 'history'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-white border border-slate-200 text-slate-700'
+          }`}
+        >
+          {t.sell.historyTab} (
+          <span dir="ltr" className="ltr-isolate font-mono">
+            {formatNumber(dailyRecon.todaySalesCount)}
+          </span>
+          )
+        </button>
+      </div>
+
       {/* Main Split Workspace */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Left: Active Cash Counter */}
+      <div className="flex-1 flex flex-col md:flex-row min-h-0 md:overflow-hidden">
+        {/* Start Side: Active Cash Counter */}
         <section
-          aria-label="Current cash sale"
-          className="flex-1 flex flex-col min-w-0 min-h-0 bg-white"
+          aria-label={t.sell.currentCashSaleAria}
+          className={`${
+            mobileSubTab === 'pos' ? 'flex' : 'hidden md:flex'
+          } flex-1 flex-col min-w-0 min-h-0 bg-white`}
         >
           {/* Scan / Search Bar */}
-          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/60 shrink-0">
+          <div className="px-4 md:px-6 py-3 md:py-4 border-b border-slate-200 bg-slate-50/60 shrink-0">
             <div className="relative">
               <Search
-                className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                className="w-4 h-4 text-slate-400 absolute start-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
                 aria-hidden="true"
               />
               <input
@@ -609,7 +709,7 @@ export function SellView({
                 id="sell-scan-input"
                 type="text"
                 role="combobox"
-                aria-label="Scan barcode or search product to add"
+                aria-label={t.sell.scanAria}
                 aria-expanded={dropdownOpen && matchingProducts.length > 0}
                 aria-controls="sell-product-suggestions"
                 aria-autocomplete="list"
@@ -625,9 +725,9 @@ export function SellView({
                   if (scanQuery.trim().length > 0) setDropdownOpen(true);
                 }}
                 onKeyDown={handleScanKeyDown}
-                placeholder="Scan barcode or type toy name to add..."
+                placeholder={t.sell.scanPlaceholder}
                 autoComplete="off"
-                className="w-full h-11 pl-10 pr-24 rounded-lg border border-slate-300 bg-white text-sm text-slate-950 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
+                className="w-full h-11 ps-10 pe-24 rounded-lg border border-slate-300 bg-white text-sm text-slate-950 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
               />
               {scanQuery && (
                 <button
@@ -638,10 +738,10 @@ export function SellView({
                     setScanFeedback(null);
                     focusScanInput();
                   }}
-                  aria-label="Clear search text"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 h-7 px-2 rounded text-xs font-medium text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                  aria-label={t.sell.clearSearchTextAria}
+                  className="absolute end-2.5 top-1/2 -translate-y-1/2 h-7 px-2 rounded text-xs font-medium text-slate-500 hover:text-slate-900 hover:bg-slate-100"
                 >
-                  Clear
+                  {t.common.clear}
                 </button>
               )}
 
@@ -655,7 +755,7 @@ export function SellView({
                 >
                   {matchingProducts.length === 0 ? (
                     <div className="px-4 py-4 text-xs text-slate-500 text-center">
-                      No active products match &ldquo;{scanQuery.trim()}&rdquo;.
+                      {interpolate(t.sell.noProductsMatch, { query: scanQuery.trim() })}
                     </div>
                   ) : (
                     matchingProducts.map((product, idx) => (
@@ -666,7 +766,7 @@ export function SellView({
                         aria-selected={idx === highlightedIdx}
                         onMouseEnter={() => setHighlightedIdx(idx)}
                         onClick={() => handleAddProduct(product)}
-                        className={`w-full px-3.5 py-2.5 text-left flex items-center justify-between gap-4 transition-colors ${
+                        className={`w-full px-3.5 py-2.5 text-start flex items-center justify-between gap-4 transition-colors ${
                           idx === highlightedIdx ? 'bg-blue-50/70' : 'hover:bg-slate-50'
                         }`}
                       >
@@ -689,20 +789,29 @@ export function SellView({
                             </p>
                             <p className="text-xs text-slate-500 truncate">
                               {product.barcode ? (
-                                <span className="font-mono">{product.barcode}</span>
+                                <span dir="ltr" className="ltr-isolate font-mono">
+                                  {product.barcode}
+                                </span>
                               ) : (
-                                'No barcode'
+                                t.common.noBarcode
                               )}
                               {product.variantLabel ? ` · ${product.variantLabel}` : ''}
-                              <span className="font-mono tabular-nums">
+                              <span className="tabular-nums">
                                 {' '}
-                                · {formatNumber(product.quantityInStock)} in stock
+                                ·{' '}
+                                <span dir="ltr" className="ltr-isolate font-mono">
+                                  {formatNumber(product.quantityInStock)}
+                                </span>{' '}
+                                {t.common.inStock}
                               </span>
                             </p>
                           </div>
                         </div>
-                        <span className="font-mono font-bold text-sm tabular-nums text-slate-950 shrink-0">
-                          {formatCurrency(product.sellingPrice, currency)}
+                        <span
+                          dir="ltr"
+                          className="ltr-isolate font-mono font-bold text-sm tabular-nums text-slate-950 shrink-0"
+                        >
+                          {formatCurrencyLocalized(product.sellingPrice, currency)}
                         </span>
                       </button>
                     ))
@@ -722,16 +831,25 @@ export function SellView({
           {lastCompletedSale && (
             <div
               role="status"
-              className="mx-6 mt-4 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 flex items-center justify-between gap-4 shrink-0"
+              className="mx-4 md:mx-6 mt-3 md:mt-4 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shrink-0 toast-enter"
             >
-              <div className="flex items-center gap-2 text-xs text-emerald-950 min-w-0">
+              <div className="flex items-center gap-2 text-xs text-emerald-950 min-w-0 flex-wrap">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
                 <span className="font-semibold">
-                  Sale completed · {formatCurrency(lastCompletedSale.totalAmount, currency)}
+                  {t.sell.saleCompleted} ·{' '}
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatCurrencyLocalized(lastCompletedSale.totalAmount, currency)}
+                  </span>
+                </span>
+                <span className="px-1.5 py-0.5 rounded border border-emerald-300 bg-white text-[11px] font-semibold text-emerald-900 whitespace-nowrap">
+                  {paymentLabel(lastCompletedSale.paymentMethod)}
                 </span>
                 <span className="text-emerald-800 truncate">
-                  ({formatNumber(lastCompletedSale.itemCount)} item
-                  {lastCompletedSale.itemCount === 1 ? '' : 's'}
+                  (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(lastCompletedSale.itemCount)}
+                  </span>{' '}
+                  {lastCompletedSale.itemCount === 1 ? t.common.item : t.common.items}
                   {lastCompletedSale.note ? ` · ${lastCompletedSale.note}` : ''})
                 </span>
               </div>
@@ -739,16 +857,16 @@ export function SellView({
                 <button
                   type="button"
                   onClick={() => setReceiptSale(lastCompletedSale)}
-                  className="h-7 px-2.5 rounded-md bg-white border border-emerald-300 text-xs font-semibold text-emerald-900 hover:bg-emerald-100/60 inline-flex items-center gap-1.5 whitespace-nowrap"
+                  className="min-h-[36px] px-2.5 rounded-md bg-white border border-emerald-300 text-xs font-semibold text-emerald-900 hover:bg-emerald-100/60 active:scale-[0.98] transition-all inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
                   <Printer className="w-3.5 h-3.5" aria-hidden="true" />
-                  Print receipt
+                  {t.sell.printReceipt}
                 </button>
                 <button
                   type="button"
                   onClick={() => setLastCompletedSale(null)}
-                  aria-label="Dismiss completed sale notice"
-                  className="w-7 h-7 rounded-md text-emerald-700 hover:bg-emerald-100 flex items-center justify-center"
+                  aria-label={t.sell.dismissNoticeAria}
+                  className="w-8 h-8 rounded-md text-emerald-700 hover:bg-emerald-100 flex items-center justify-center"
                 >
                   <X className="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
@@ -759,43 +877,136 @@ export function SellView({
           {submitError && (
             <div
               role="alert"
-              className="mx-6 mt-4 px-4 py-2.5 rounded-lg border border-red-200 bg-red-50 text-xs text-red-800 shrink-0"
+              className="mx-4 md:mx-6 mt-3 md:mt-4 px-4 py-2.5 rounded-lg border border-red-200 bg-red-50 text-xs text-red-800 shrink-0"
             >
               {submitError}
             </div>
           )}
 
-          {/* Active Cart Line Items */}
-          <div className="flex-1 overflow-y-auto min-h-0">
+          {/* Mobile Quick-Tap Product Grid (< md) */}
+          <div className="md:hidden px-4 py-4 space-y-3 pb-40">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                {t.sell.quickTapTitle} (
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatNumber(activeProducts.length)}
+                </span>
+                )
+              </h2>
+              {cart.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setMobileCartOpen(true)}
+                  className="text-xs font-semibold text-blue-700 hover:text-blue-900"
+                >
+                  {interpolate(t.sell.viewInCart, {
+                    count: formatNumber(cartSummary.itemCount),
+                  })}
+                </button>
+              )}
+            </div>
+
+            {activeProducts.length === 0 ? (
+              <div className="py-12 px-4 text-center rounded-xl border border-slate-200 bg-slate-50/70">
+                <Package className="w-6 h-6 text-slate-400 mx-auto mb-2" aria-hidden="true" />
+                <p className="text-sm font-semibold text-slate-900">{t.sell.noActiveToys}</p>
+                <p className="mt-1 text-xs text-slate-500">{t.sell.addProductsHint}</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2.5">
+                {activeProducts.map((product) => {
+                  const inCartQty = cartQtyByProductId.get(product.id) ?? 0;
+                  const lowStock =
+                    product.reorderLevel !== null &&
+                    product.reorderLevel !== undefined &&
+                    product.quantityInStock <= product.reorderLevel;
+                  return (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => handleAddProduct(product)}
+                      className="min-h-[44px] rounded-xl border border-slate-200 bg-white p-2.5 text-start hover:border-slate-300 active:scale-[0.98] transition-all duration-150 flex flex-col gap-2 relative shadow-xs"
+                    >
+                      <div className="relative w-full h-20 rounded-lg bg-slate-100 border border-slate-200/80 overflow-hidden flex items-center justify-center">
+                        {product.photos?.[0] ? (
+                          <img
+                            src={product.photos[0]}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <Package className="w-5 h-5 text-slate-400" aria-hidden="true" />
+                        )}
+                        {inCartQty > 0 && (
+                          <span
+                            dir="ltr"
+                            className="ltr-isolate absolute top-1.5 end-1.5 px-1.5 py-0.5 rounded bg-slate-900 text-white text-[11px] font-mono font-bold tabular-nums shadow-xs"
+                          >
+                            {inCartQty}×
+                          </span>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1 flex flex-col justify-between">
+                        <p className="text-xs font-semibold text-slate-950 leading-snug line-clamp-2">
+                          {product.name}
+                        </p>
+                        <div className="mt-1.5 flex items-baseline justify-between gap-1">
+                          <span
+                            className={`text-[11px] tabular-nums ${
+                              lowStock ? 'text-amber-700 font-semibold' : 'text-slate-500'
+                            }`}
+                          >
+                            <span dir="ltr" className="ltr-isolate font-mono">
+                              {formatNumber(product.quantityInStock)}
+                            </span>{' '}
+                            {t.sell.leftSuffix}
+                          </span>
+                          <span
+                            dir="ltr"
+                            className="ltr-isolate text-xs font-mono font-bold tabular-nums text-slate-950 whitespace-nowrap"
+                          >
+                            {formatCurrencyLocalized(product.sellingPrice, currency)}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Active Cart Line Items (Desktop >= md) */}
+          <div className="hidden md:block flex-1 overflow-y-auto min-h-0">
             {cart.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center p-10 text-center">
                 <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center mb-3">
                   <ShoppingBag className="w-5 h-5" aria-hidden="true" />
                 </div>
-                <p className="text-sm font-semibold text-slate-900">Ready for next customer</p>
+                <p className="text-sm font-semibold text-slate-900">{t.sell.readyTitle}</p>
                 <p className="mt-1 text-xs text-slate-500 max-w-sm leading-relaxed">
-                  Scan a toy&apos;s barcode with the USB scanner or type its name above to start a
-                  cash sale. Scan again to add another unit.
+                  {t.sell.readySubtitle}
                 </p>
               </div>
             ) : (
-              <table className="w-full border-collapse text-left">
+              <table className="w-full border-collapse text-start">
                 <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
                   <tr>
-                    <th scope="col" className="py-2.5 pl-5 pr-3">
-                      Item
+                    <th scope="col" className="py-2.5 ps-5 pe-3">
+                      {t.sell.colItem}
                     </th>
                     <th scope="col" className="py-2.5 px-2 w-28">
-                      Qty
+                      {t.sell.colQty}
                     </th>
-                    <th scope="col" className="py-2.5 px-2 text-right w-32">
-                      Unit Price ({currency})
+                    <th scope="col" className="py-2.5 px-2 text-end w-32">
+                      {t.sell.colUnitPrice} ({currency})
                     </th>
-                    <th scope="col" className="py-2.5 px-2 text-right w-28">
-                      Line Total
+                    <th scope="col" className="py-2.5 px-2 text-end w-28">
+                      {t.sell.colLineTotal}
                     </th>
-                    <th scope="col" className="py-2.5 pl-1 pr-4 w-10">
-                      <span className="sr-only">Remove</span>
+                    <th scope="col" className="py-2.5 ps-1 pe-4 w-10">
+                      <span className="sr-only">{t.sell.colRemove}</span>
                     </th>
                   </tr>
                 </thead>
@@ -806,6 +1017,7 @@ export function SellView({
                       line={line}
                       liveProduct={productMap.get(line.productId)}
                       currency={currency}
+                      hideCostDetails={hideCostDetails}
                       onStepQty={(productId, delta) =>
                         setCart((prev) => stepCartItemQuantity(prev, productId, delta))
                       }
@@ -826,21 +1038,22 @@ export function SellView({
             )}
           </div>
 
-          {/* Inline Esc Clear Confirmation */}
+          {/* Inline Esc Clear Confirmation (Desktop) */}
           {confirmClearOpen && (
             <div
               role="alertdialog"
               aria-modal="false"
               aria-labelledby="clear-sale-confirm-title"
-              className="mx-6 mb-3 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 flex items-center justify-between gap-4 shrink-0"
+              className="hidden md:flex mx-6 mb-3 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 items-center justify-between gap-4 shrink-0"
             >
               <div>
                 <p id="clear-sale-confirm-title" className="text-sm font-semibold text-amber-950">
-                  Clear current sale?
+                  {t.sell.clearConfirmTitle}
                 </p>
                 <p className="text-xs text-amber-800">
-                  This removes all {formatNumber(cartSummary.itemCount)} item(s) and clears the
-                  note.
+                  {interpolate(t.sell.clearConfirmDesc, {
+                    count: formatNumber(cartSummary.itemCount),
+                  })}
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -852,7 +1065,7 @@ export function SellView({
                   }}
                   className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  Keep editing (Esc)
+                  {t.sell.keepEditingEsc}
                 </button>
                 <button
                   ref={clearConfirmBtnRef}
@@ -860,68 +1073,113 @@ export function SellView({
                   onClick={confirmClearSale}
                   className="h-9 px-4 rounded-lg bg-red-700 text-white text-xs font-semibold hover:bg-red-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700"
                 >
-                  Clear sale
+                  {t.sell.clearSaleBtn}
                 </button>
               </div>
             </div>
           )}
 
-          {/* Checkout Footer */}
-          <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 space-y-3.5 shrink-0">
+          {/* Checkout Footer (Desktop >= md) */}
+          <div className="hidden md:block px-6 py-4 border-t border-slate-200 bg-slate-50 space-y-3.5 shrink-0">
             {(cartSummary.belowCostCount > 0 || cartSummary.exceedingStockCount > 0) && (
               <div className="flex items-center gap-2 text-xs font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" aria-hidden="true" />
                 <span>
                   {[
                     cartSummary.belowCostCount > 0
-                      ? `${cartSummary.belowCostCount} item${cartSummary.belowCostCount === 1 ? '' : 's'} priced below cost`
+                      ? interpolate(t.sell.belowCostCountLabel, {
+                          count: formatNumber(cartSummary.belowCostCount),
+                        })
                       : null,
                     cartSummary.exceedingStockCount > 0
-                      ? `${cartSummary.exceedingStockCount} item${cartSummary.exceedingStockCount === 1 ? '' : 's'} exceeding stock (stock will go negative)`
+                      ? interpolate(t.sell.exceedsStockCountLabel, {
+                          count: formatNumber(cartSummary.exceedingStockCount),
+                        })
                       : null,
                   ]
                     .filter(Boolean)
                     .join(' · ')}
-                  . Sale is still allowed.
+                  {t.sell.saleAllowedSuffix}
                 </span>
               </div>
             )}
 
-            <div>
-              <label
-                htmlFor="sell-note-input"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Sale note (optional)
-              </label>
-              <input
-                id="sell-note-input"
-                type="text"
-                value={saleNote}
-                onChange={(e) => setSaleNote(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-                    e.preventDefault();
-                    focusScanInput();
-                  }
-                }}
-                maxLength={500}
-                placeholder="e.g. Paid via FIB, gift wrap..."
-                className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
-              />
+            <div className="flex items-end gap-3">
+              <div className="shrink-0">
+                <span className="block text-xs font-semibold text-slate-700 mb-1">
+                  {t.sell.paymentMethod}
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label={t.sell.paymentMethod}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((option) => {
+                    const selected = paymentMethod === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => {
+                          setPaymentMethod(option.value);
+                          focusScanInput();
+                        }}
+                        className={`h-10 px-3.5 rounded-lg border text-xs font-semibold transition-all duration-150 active:scale-[0.98] whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
+                          selected
+                            ? 'bg-slate-900 border-slate-900 text-white'
+                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {paymentLabel(option.value)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex-1 min-w-[200px]">
+                <label
+                  htmlFor="sell-note-input"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  {t.sell.saleNote}
+                </label>
+                <input
+                  id="sell-note-input"
+                  type="text"
+                  value={saleNote}
+                  onChange={(e) => setSaleNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+                      e.preventDefault();
+                      focusScanInput();
+                    }
+                  }}
+                  maxLength={500}
+                  placeholder={t.sell.saleNotePlaceholder}
+                  className="w-full h-10 px-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
+                />
+              </div>
             </div>
 
             <div className="flex items-end justify-between gap-4">
               <div>
                 <p className="text-xs font-medium text-slate-500 tabular-nums">
-                  Total ({formatNumber(cartSummary.itemCount)} item
-                  {cartSummary.itemCount === 1 ? '' : 's'})
+                  {t.sell.totalLabel} (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(cartSummary.itemCount)}
+                  </span>{' '}
+                  {cartSummary.itemCount === 1 ? t.common.item : t.common.items})
                 </p>
                 <p
                   data-testid="sale-grand-total"
                   className="text-3xl font-bold font-mono tracking-tight tabular-nums text-slate-950 leading-none mt-1 whitespace-nowrap"
                 >
-                  {formatCurrency(cartSummary.totalAmount, currency)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatCurrencyLocalized(cartSummary.totalAmount, currency)}
+                  </span>
                 </p>
               </div>
 
@@ -930,51 +1188,119 @@ export function SellView({
                   type="button"
                   disabled={cart.length === 0 && saleNote.trim() === ''}
                   onClick={() => setConfirmClearOpen(true)}
-                  className="h-11 px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-45 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                  className="h-11 px-4 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-45 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.98] whitespace-nowrap"
                 >
-                  Clear (Esc)
+                  {t.sell.clearEsc}
                 </button>
                 <button
                   type="button"
                   disabled={cart.length === 0 || isCompleting}
                   onClick={() => void handleCompleteSale()}
-                  className="h-11 px-5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-45 disabled:cursor-not-allowed transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                  className="h-11 px-5 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-45 disabled:cursor-not-allowed transition-all duration-150 active:scale-[0.98] whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                 >
-                  {isCompleting ? 'Saving sale...' : 'Complete sale (Ctrl+Enter)'}
+                  {isCompleting ? t.sell.savingSale : t.sell.completeSaleShortcut}
                 </button>
               </div>
             </div>
           </div>
+
+          {/* Mobile Sticky Bottom Checkout Bar (< md) */}
+          <div className="md:hidden fixed bottom-16 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 flex items-center justify-between gap-3 shadow-sm">
+            <button
+              type="button"
+              onClick={() => {
+                if (cart.length > 0) setMobileCartOpen(true);
+              }}
+              className="text-start min-w-0 flex-1"
+            >
+              <p className="text-[11px] font-medium text-slate-500 tabular-nums">
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatNumber(cartSummary.itemCount)}
+                </span>{' '}
+                {cartSummary.itemCount === 1 ? t.common.item : t.common.items} {t.sell.inCartSuffix}
+              </p>
+              <p className="text-lg font-bold font-mono tabular-nums text-slate-950 truncate">
+                <span dir="ltr" className="ltr-isolate">
+                  {formatCurrencyLocalized(cartSummary.totalAmount, currency)}
+                </span>
+              </p>
+            </button>
+            <button
+              type="button"
+              data-testid="mobile-open-cart-btn"
+              disabled={cart.length === 0}
+              onClick={() => setMobileCartOpen(true)}
+              className="min-h-[44px] px-4 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-45 disabled:cursor-not-allowed active:scale-[0.98] transition-all duration-150 inline-flex items-center gap-2 whitespace-nowrap shrink-0"
+            >
+              <ShoppingBag className="w-4 h-4" aria-hidden="true" />
+              <span>
+                {t.sell.checkout} (
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatNumber(cartSummary.itemCount)}
+                </span>
+                )
+              </span>
+            </button>
+          </div>
         </section>
 
-        {/* Right: Today's Reconciliation & Sales History */}
+        {/* End Side: Today's Reconciliation & Sales History */}
         <aside
-          aria-label="Today's summary and sales history"
-          className="w-[370px] xl:w-[440px] shrink-0 border-l border-slate-200 bg-slate-50/60 flex flex-col min-h-0"
+          aria-label={t.sell.todaySummaryAria}
+          className={`${
+            mobileSubTab === 'history' ? 'flex' : 'hidden md:flex'
+          } w-full md:w-[370px] xl:w-[440px] shrink-0 md:border-s border-slate-200 bg-slate-50/60 flex-col min-h-0 pb-24 md:pb-0`}
         >
           {/* Today's Cash Summary & Noted Sales */}
           <div className="p-5 border-b border-slate-200 bg-white space-y-4 shrink-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/70">
-                <p className="text-xs font-medium text-slate-500">Today&apos;s Total</p>
+                <p className="text-xs font-medium text-slate-500">{t.sell.todayTotal}</p>
                 <p
                   data-testid="today-reconciliation-total"
                   className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatCurrency(dailyRecon.todayTotal, currency)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatCurrencyLocalized(dailyRecon.todayTotal, currency)}
+                  </span>
                 </p>
+                <div className="mt-2 pt-1.5 border-t border-slate-200/80 space-y-0.5 text-[11px] tabular-nums">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500">{t.sell.cash}</span>
+                    <span
+                      dir="ltr"
+                      className="ltr-isolate font-mono font-semibold text-slate-800"
+                    >
+                      {formatCurrencyLocalized(dailyRecon.todayCashTotal, currency)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500">{t.sell.digital}</span>
+                    <span
+                      dir="ltr"
+                      className="ltr-isolate font-mono font-semibold text-blue-700"
+                    >
+                      {formatCurrencyLocalized(dailyRecon.todayDigitalTotal, currency)}
+                    </span>
+                  </div>
+                </div>
               </div>
               <div className="p-3.5 rounded-lg border border-slate-200 bg-slate-50/70">
-                <p className="text-xs font-medium text-slate-500">Sales Today</p>
+                <p className="text-xs font-medium text-slate-500">{t.sell.salesToday}</p>
                 <p
                   data-testid="today-reconciliation-count"
                   className="mt-1 text-xl font-bold font-mono tabular-nums text-slate-950"
                 >
-                  {formatNumber(dailyRecon.todaySalesCount)}
+                  <span dir="ltr" className="ltr-isolate">
+                    {formatNumber(dailyRecon.todaySalesCount)}
+                  </span>
                 </p>
                 {dailyRecon.todayVoidedCount > 0 && (
                   <p className="text-[11px] text-slate-500 tabular-nums">
-                    {formatNumber(dailyRecon.todayVoidedCount)} voided excluded
+                    <span dir="ltr" className="ltr-isolate font-mono">
+                      {formatNumber(dailyRecon.todayVoidedCount)}
+                    </span>{' '}
+                    {t.sell.voidedExcluded}
                   </p>
                 )}
               </div>
@@ -984,15 +1310,16 @@ export function SellView({
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
                   <FileText className="w-3.5 h-3.5 text-amber-700" aria-hidden="true" />
-                  Today&apos;s Sales with Notes ({formatNumber(dailyRecon.notedSalesToday.length)})
+                  {t.sell.todayNotedSales} (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(dailyRecon.notedSalesToday.length)}
+                  </span>
+                  )
                 </h2>
               </div>
 
               {dailyRecon.notedSalesToday.length === 0 ? (
-                <p className="text-xs text-slate-500 py-2">
-                  No noted sales today. Add a note (e.g. Paid via FIB) during checkout to track it
-                  here.
-                </p>
+                <p className="text-xs text-slate-500 py-2">{t.sell.noNotedSalesToday}</p>
               ) : (
                 <div className="max-h-32 overflow-y-auto divide-y divide-slate-200 border border-slate-200 rounded-lg bg-amber-50/40">
                   {dailyRecon.notedSalesToday.map((sale) => (
@@ -1000,17 +1327,26 @@ export function SellView({
                       key={sale.id}
                       type="button"
                       onClick={() => setSelectedSaleId(sale.id)}
-                      className="w-full px-3 py-2 text-left hover:bg-amber-50 transition-colors flex items-start justify-between gap-3"
+                      className="w-full px-3 py-2 text-start hover:bg-amber-50 transition-colors flex items-start justify-between gap-3"
                     >
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-slate-900 truncate">{sale.note}</p>
-                        <p className="text-[11px] text-slate-500 font-mono tabular-nums">
-                          {formatSaleTime(sale.createdAt)} · {formatNumber(sale.itemCount)} item
-                          {sale.itemCount === 1 ? '' : 's'}
+                        <p className="text-[11px] text-slate-500 tabular-nums">
+                          <span dir="ltr" className="ltr-isolate font-mono">
+                            {formatSaleTime(sale.createdAt, lang)}
+                          </span>{' '}
+                          ·{' '}
+                          <span dir="ltr" className="ltr-isolate font-mono">
+                            {formatNumber(sale.itemCount)}
+                          </span>{' '}
+                          {sale.itemCount === 1 ? t.common.item : t.common.items}
                         </p>
                       </div>
-                      <span className="text-xs font-mono font-bold tabular-nums text-slate-950 shrink-0">
-                        {formatCurrency(sale.totalAmount, currency)}
+                      <span
+                        dir="ltr"
+                        className="ltr-isolate text-xs font-mono font-bold tabular-nums text-slate-950 shrink-0"
+                      >
+                        {formatCurrencyLocalized(sale.totalAmount, currency)}
                       </span>
                     </button>
                   ))}
@@ -1020,49 +1356,54 @@ export function SellView({
           </div>
 
           {/* Sales History Header + Date Filter */}
-          <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+          <div className="px-4 md:px-5 py-3 border-b border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2 shrink-0">
             <h2 className="text-sm font-bold text-slate-950 whitespace-nowrap">
-              Sales History{' '}
+              {t.sell.salesHistory}{' '}
               <span className="text-xs font-medium text-slate-500 tabular-nums">
-                ({formatNumber(filteredSales.length)})
+                (
+                <span dir="ltr" className="ltr-isolate font-mono">
+                  {formatNumber(filteredSales.length)}
+                </span>
+                )
               </span>
             </h2>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <button
                 type="button"
                 onClick={() =>
                   setHistoryDateFilter((prev) => (prev === todayYmd ? '' : todayYmd))
                 }
-                className={`h-8 px-2.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
+                className={`min-h-[36px] px-2.5 rounded-md border text-xs font-medium transition-colors whitespace-nowrap ${
                   historyDateFilter === todayYmd
                     ? 'border-blue-600 bg-blue-50 text-blue-800'
                     : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
                 }`}
               >
-                Today
+                {t.common.today}
               </button>
-              <div className="relative flex items-center">
+              <div dir="ltr" className="relative flex items-center">
                 <Calendar
                   className="w-3.5 h-3.5 text-slate-400 absolute left-2 pointer-events-none"
                   aria-hidden="true"
                 />
                 <input
                   type="date"
-                  aria-label="Filter sales history by date"
+                  dir="ltr"
+                  aria-label={t.sell.filterDateAria}
                   value={historyDateFilter}
                   onChange={(e) => setHistoryDateFilter(e.target.value)}
-                  className="h-8 pl-7 pr-2 rounded-md border border-slate-300 bg-white text-xs font-mono text-slate-800 focus:outline-none focus:border-blue-600"
+                  className="ltr-isolate min-h-[36px] pl-7 pr-2 rounded-md border border-slate-300 bg-white text-xs font-mono text-slate-800 focus:outline-none focus:border-blue-600"
                 />
               </div>
               {historyDateFilter && (
                 <button
                   type="button"
                   onClick={() => setHistoryDateFilter('')}
-                  aria-label="Show all dates"
-                  className="h-8 px-2 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200/70"
+                  aria-label={t.sell.showAllDatesAria}
+                  className="min-h-[36px] px-2 rounded-md text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200/70"
                 >
-                  All
+                  {t.common.all}
                 </button>
               )}
             </div>
@@ -1072,12 +1413,12 @@ export function SellView({
           <div className="flex-1 overflow-y-auto min-h-0">
             {loadError && (
               <div className="m-4 p-3 rounded-lg border border-red-200 bg-red-50 text-xs text-red-800">
-                Could not load sales: {loadError}
+                {t.sell.loadSalesError} {loadError}
               </div>
             )}
 
             {isLoadingSales ? (
-              <div className="p-4 space-y-2.5" aria-label="Loading sales history">
+              <div className="p-4 space-y-2.5" aria-label={t.sell.loadingSalesAria}>
                 {Array.from({ length: 4 }).map((_, idx) => (
                   <div
                     key={idx}
@@ -1088,12 +1429,10 @@ export function SellView({
             ) : groupedSales.length === 0 ? (
               <div className="py-12 px-6 text-center">
                 <p className="text-sm font-semibold text-slate-900">
-                  {sales.length === 0 ? 'No sales recorded yet' : 'No sales on this date'}
+                  {sales.length === 0 ? t.sell.noSalesTitle : t.sell.noSalesOnDateTitle}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {sales.length === 0
-                    ? 'Completed sales will appear here for receipt printing and voiding.'
-                    : 'Clear the date filter to view sales from other days.'}
+                  {sales.length === 0 ? t.sell.noSalesEmptyHint : t.sell.noSalesDateHint}
                 </p>
               </div>
             ) : (
@@ -1106,38 +1445,57 @@ export function SellView({
                     <div className="divide-y divide-slate-200 bg-white">
                       {group.items.map((sale) => {
                         const isVoided = sale.status === 'voided';
-                        const firstTitle = sale.items[0]?.productName ?? 'Sale';
+                        const firstTitle = sale.items[0]?.productName ?? t.sell.saleFallbackTitle;
                         const extraLines = sale.items.length - 1;
+                        const methodLabel = paymentLabel(sale.paymentMethod);
+                        const isDigital = isDigitalPaymentMethod(sale.paymentMethod);
                         return (
                           <button
                             key={sale.id}
                             type="button"
                             onClick={() => setSelectedSaleId(sale.id)}
-                            className="w-full px-5 py-3 text-left hover:bg-slate-50 transition-colors flex items-start justify-between gap-3"
+                            className="w-full px-5 py-3 text-start hover:bg-slate-50 transition-colors flex items-start justify-between gap-3"
                           >
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="text-xs font-mono text-slate-500 tabular-nums">
-                                  {formatSaleTime(sale.createdAt)}
+                                <span
+                                  dir="ltr"
+                                  className="ltr-isolate text-xs font-mono text-slate-500 tabular-nums"
+                                >
+                                  {formatSaleTime(sale.createdAt, lang)}
                                 </span>
                                 <span className="text-xs font-semibold text-slate-950 truncate">
                                   {firstTitle}
-                                  {extraLines > 0 ? ` +${extraLines} more` : ''}
+                                  {extraLines > 0
+                                    ? ` ${interpolate(t.sell.moreSuffix, { count: extraLines })}`
+                                    : ''}
                                 </span>
                               </div>
-                              <div className="mt-0.5 flex items-center gap-2 flex-wrap text-xs text-slate-500">
+                              <div className="mt-1 flex items-center gap-2 flex-wrap text-xs text-slate-500">
+                                <span
+                                  data-testid={`sale-payment-badge-${sale.id}`}
+                                  className={`px-1.5 py-0.5 rounded border text-[11px] font-semibold leading-none whitespace-nowrap ${
+                                    isDigital
+                                      ? 'border-blue-200 bg-blue-50 text-blue-800'
+                                      : 'border-slate-200 bg-slate-100 text-slate-700'
+                                  }`}
+                                >
+                                  {methodLabel}
+                                </span>
                                 <span className="tabular-nums">
-                                  {formatNumber(sale.itemCount)} item
-                                  {sale.itemCount === 1 ? '' : 's'}
+                                  <span dir="ltr" className="ltr-isolate font-mono">
+                                    {formatNumber(sale.itemCount)}
+                                  </span>{' '}
+                                  {sale.itemCount === 1 ? t.common.item : t.common.items}
                                 </span>
                                 {isVoided && (
                                   <span className="inline-flex items-center gap-1 font-semibold text-red-700">
                                     <Ban className="w-3 h-3" aria-hidden="true" />
-                                    Voided
+                                    {t.sell.voidedBadge}
                                   </span>
                                 )}
                                 {sale.note ? (
-                                  <span className="text-amber-800 font-medium truncate max-w-[210px]">
+                                  <span className="text-amber-800 font-medium truncate max-w-[180px]">
                                     · {sale.note}
                                   </span>
                                 ) : null}
@@ -1145,11 +1503,12 @@ export function SellView({
                             </div>
 
                             <span
-                              className={`text-sm font-mono font-bold tabular-nums shrink-0 ${
+                              dir="ltr"
+                              className={`ltr-isolate text-sm font-mono font-bold tabular-nums shrink-0 ${
                                 isVoided ? 'line-through text-slate-400' : 'text-slate-950'
                               }`}
                             >
-                              {formatCurrency(sale.totalAmount, currency)}
+                              {formatCurrencyLocalized(sale.totalAmount, currency)}
                             </span>
                           </button>
                         );
@@ -1163,10 +1522,293 @@ export function SellView({
         </aside>
       </div>
 
+      {/* Mobile Expandable Cart Drawer (< md) */}
+      {mobileCartOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t.sell.mobileCartAria}
+          className="md:hidden fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs modal-backdrop-enter flex flex-col justify-end"
+        >
+          <div className="bg-white rounded-t-2xl border-t border-slate-200 shadow-2xl max-h-[88vh] flex flex-col overflow-hidden drawer-up-enter">
+            <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
+              <div>
+                <h2 className="text-base font-bold text-slate-950">
+                  {t.sell.mobileCartTitle} (
+                  <span dir="ltr" className="ltr-isolate font-mono">
+                    {formatNumber(cartSummary.itemCount)}
+                  </span>{' '}
+                  {cartSummary.itemCount === 1 ? t.common.item : t.common.items})
+                </h2>
+                <p className="text-xs text-slate-500">{t.sell.mobileCartSubtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileCartOpen(false)}
+                aria-label={t.sell.closeCartAria}
+                className="w-10 h-10 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center shrink-0"
+              >
+                <X className="w-4 h-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-200 px-4">
+              {cart.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-500">
+                  {t.sell.emptyCartText}
+                </div>
+              ) : (
+                cart.map((line) => {
+                  const liveProduct = productMap.get(line.productId);
+                  const effectiveStock = liveProduct ? liveProduct.quantityInStock : line.availableStock;
+                  const effectiveCost = liveProduct ? liveProduct.costPrice : line.costPrice;
+                  const belowCost = isLineBelowCost(line, liveProduct);
+                  const exceedsStock = isLineExceedingStock(line, liveProduct);
+                  return (
+                    <div key={line.productId} className="py-3.5 space-y-2.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <div className="w-10 h-10 rounded-lg border border-slate-200 bg-slate-100 overflow-hidden flex items-center justify-center shrink-0">
+                            {line.photo ? (
+                              <img
+                                src={line.photo}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <Package className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-950 leading-snug">
+                              {line.productName}
+                            </p>
+                            <p className="text-xs text-slate-500 tabular-nums">
+                              <span dir="ltr" className="ltr-isolate font-mono">
+                                {formatNumber(effectiveStock)}
+                              </span>{' '}
+                              {t.common.inStock}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCart((prev) => removeCartItem(prev, line.productId))}
+                          aria-label={interpolate(t.sell.removeFromSaleAria, {
+                            name: line.productName,
+                          })}
+                          className="w-9 h-9 rounded-lg text-slate-400 hover:text-red-700 hover:bg-red-50 flex items-center justify-center shrink-0"
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                      </div>
+
+                      {(belowCost || exceedsStock) && (
+                        <div className="space-y-0.5 text-xs font-semibold">
+                          {belowCost && (
+                            <p className="text-red-700 flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                              {hideCostDetails
+                                ? t.sell.belowMinCost
+                                : interpolate(t.sell.belowCost, {
+                                    cost: formatCurrencyLocalized(effectiveCost, currency),
+                                  })}
+                            </p>
+                          )}
+                          {exceedsStock && (
+                            <p className="text-amber-700 flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                              {t.sell.exceedsStock} (
+                              <span dir="ltr" className="ltr-isolate font-mono">
+                                {formatNumber(effectiveStock - line.quantity)}
+                              </span>
+                              )
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between gap-3">
+                        <div
+                          dir="ltr"
+                          className="inline-flex items-center rounded-lg border border-slate-300 bg-white overflow-hidden"
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCart((prev) => stepCartItemQuantity(prev, line.productId, -1))
+                            }
+                            aria-label={interpolate(t.sell.decreaseQtyAria, {
+                              name: line.productName,
+                            })}
+                            className="w-10 h-10 flex items-center justify-center text-slate-700 hover:bg-slate-100"
+                          >
+                            <Minus className="w-4 h-4" aria-hidden="true" />
+                          </button>
+                          <span className="w-10 text-center text-sm font-mono font-semibold tabular-nums text-slate-950">
+                            {line.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCart((prev) => stepCartItemQuantity(prev, line.productId, 1))
+                            }
+                            aria-label={interpolate(t.sell.increaseQtyAria, {
+                              name: line.productName,
+                            })}
+                            className="w-10 h-10 flex items-center justify-center text-slate-700 hover:bg-slate-100"
+                          >
+                            <Plus className="w-4 h-4" aria-hidden="true" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-2 min-w-0">
+                          <label className="sr-only" htmlFor={`mobile-price-${line.productId}`}>
+                            {interpolate(t.sell.unitPriceForAria, { name: line.productName })}
+                          </label>
+                          <input
+                            id={`mobile-price-${line.productId}`}
+                            type="number"
+                            dir="ltr"
+                            min={0}
+                            step={currency === 'USD' ? '0.01' : '1'}
+                            value={line.unitPrice}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              if (e.target.value !== '' && Number.isFinite(val) && val >= 0) {
+                                setCart((prev) =>
+                                  updateCartItemUnitPrice(
+                                    prev,
+                                    line.productId,
+                                    Math.round(val * 100) / 100
+                                  )
+                                );
+                              }
+                            }}
+                            className="ltr-isolate w-28 min-h-[40px] px-2.5 rounded-lg border border-slate-300 text-right text-sm font-mono font-semibold tabular-nums text-slate-950"
+                          />
+                          <span
+                            dir="ltr"
+                            className="ltr-isolate text-sm font-mono font-bold tabular-nums text-slate-950 whitespace-nowrap"
+                          >
+                            {formatCurrencyLocalized(line.quantity * line.unitPrice, currency)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="px-4 py-4 border-t border-slate-200 bg-slate-50 space-y-3 shrink-0">
+              {confirmClearOpen && (
+                <div className="p-3 rounded-lg border border-amber-300 bg-amber-50 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-amber-950">
+                    {t.sell.clearThisSale}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearOpen(false)}
+                      className="min-h-[36px] px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700"
+                    >
+                      {t.sell.keepShort}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmClearSale}
+                      className="min-h-[36px] px-3 rounded-lg bg-red-700 text-white text-xs font-semibold"
+                    >
+                      {t.sell.clearShort}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <span className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  {t.sell.paymentMethod}
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label={t.sell.mobilePaymentMethodAria}
+                  className="grid grid-cols-3 gap-1.5"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((option) => {
+                    const selected = paymentMethod === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => setPaymentMethod(option.value)}
+                        className={`min-h-[40px] px-2 rounded-lg border text-xs font-semibold transition-all duration-150 active:scale-[0.98] ${
+                          selected
+                            ? 'bg-slate-900 border-slate-900 text-white'
+                            : 'bg-white border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        {paymentLabel(option.value)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <input
+                type="text"
+                aria-label={t.sell.saleNote}
+                value={saleNote}
+                onChange={(e) => setSaleNote(e.target.value)}
+                maxLength={500}
+                placeholder={t.sell.saleNotePlaceholder}
+                className="w-full min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-400"
+              />
+
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div>
+                  <p className="text-[11px] font-medium text-slate-500">{t.sell.grandTotal}</p>
+                  <p
+                    data-testid="mobile-sale-grand-total"
+                    className="text-xl font-bold font-mono tabular-nums text-slate-950"
+                  >
+                    <span dir="ltr" className="ltr-isolate">
+                      {formatCurrencyLocalized(cartSummary.totalAmount, currency)}
+                    </span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={cart.length === 0 && saleNote.trim() === ''}
+                    onClick={() => setConfirmClearOpen(true)}
+                    className="min-h-[44px] px-3.5 rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-700 disabled:opacity-45"
+                  >
+                    {t.sell.clearShort}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cart.length === 0 || isCompleting}
+                    onClick={() => void handleCompleteSale()}
+                    className="min-h-[44px] px-4 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 disabled:opacity-45 active:scale-[0.98] transition-all duration-150 whitespace-nowrap"
+                  >
+                    {isCompleting ? t.sell.savingShort : t.sell.completeSale}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedSale && (
         <SaleDetailsModal
           sale={selectedSale}
           currency={currency}
+          hideCostDetails={hideCostDetails}
           onPrintReceipt={(sale) => {
             setReceiptSale(sale);
           }}
@@ -1182,6 +1824,9 @@ export function SellView({
         <ReceiptModal
           sale={receiptSale}
           shopName={shopName}
+          storeSubtitle={storeSubtitle}
+          receiptFooter={receiptFooter}
+          logoUrl={logoUrl}
           currency={currency}
           onClose={() => {
             setReceiptSale(null);

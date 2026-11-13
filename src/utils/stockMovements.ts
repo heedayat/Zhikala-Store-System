@@ -6,6 +6,8 @@ import {
   type StockMovementReason,
   type StockMovementType,
 } from '../types/inventory';
+import { getTranslations, interpolate, type AppLanguage } from './i18n';
+import { formatLocalYmd } from './sales';
 
 export interface StockAdjustmentInput {
   type: 'add' | 'remove';
@@ -43,30 +45,35 @@ export interface StockHistoryFilters {
 }
 
 export function validateStockAdjustment(
-  input: StockAdjustmentInput
+  input: StockAdjustmentInput,
+  lang: AppLanguage = 'en'
 ):
   | { valid: true; data: ValidatedStockAdjustment }
   | { valid: false; errors: StockAdjustmentValidationErrors } {
+  const v = getTranslations(lang).validation;
   const errors: StockAdjustmentValidationErrors = {};
 
   if (!input.product) {
-    errors.product = 'Select a product by searching or scanning its barcode.';
+    errors.product = v.stockProductRequired;
   }
 
   const qtyRaw = input.quantity.trim();
   const parsedQty = Number(qtyRaw);
   if (!qtyRaw || !Number.isFinite(parsedQty) || !Number.isInteger(parsedQty) || parsedQty < 1) {
-    errors.quantity = 'Enter a whole quantity of 1 or more.';
+    errors.quantity = v.stockQtyInvalidWhole;
   } else if (parsedQty > 1_000_000) {
-    errors.quantity = 'Quantity is too large.';
+    errors.quantity = v.stockQtyTooLarge;
   } else if (input.type === 'remove' && input.product && parsedQty > input.product.quantityInStock) {
-    errors.quantity = `Cannot remove ${parsedQty}; only ${input.product.quantityInStock} in stock.`;
+    errors.quantity = interpolate(v.stockRemoveExceeds, {
+      requested: parsedQty,
+      available: input.product.quantityInStock,
+    });
   }
 
   const allowedReasons: readonly string[] =
     input.type === 'add' ? ADD_STOCK_REASONS : REMOVE_STOCK_REASONS;
   if (!allowedReasons.includes(input.reason)) {
-    errors.reason = 'Choose a valid reason.';
+    errors.reason = v.stockReasonInvalid;
   }
 
   let parsedCostPrice: number | null = null;
@@ -75,18 +82,18 @@ export function validateStockAdjustment(
     if (costRaw !== '') {
       const val = Number(costRaw);
       if (!Number.isFinite(val) || val < 0) {
-        errors.costPrice = 'Enter a valid cost price (0 or higher).';
+        errors.costPrice = v.stockCostInvalid;
       } else if (val > 1_000_000_000) {
-        errors.costPrice = 'Cost price is too large.';
+        errors.costPrice = v.stockCostTooLarge;
       } else {
-        parsedCostPrice = Math.round(val);
+        parsedCostPrice = Math.round(val * 100) / 100;
       }
     }
   }
 
   const note = input.note.trim();
   if (note.length > 500) {
-    errors.note = 'Note must be 500 characters or fewer.';
+    errors.note = v.stockNoteMax;
   }
 
   if (Object.keys(errors).length > 0 || !input.product) {
@@ -159,7 +166,13 @@ export function filterStockMovements(
   return sortStockMovementsNewestFirst(filtered);
 }
 
-export function formatMovementDateTime(date: Date): string {
+export function formatMovementDateTime(date: Date, lang: AppLanguage = 'en'): string {
+  if (lang === 'ku') {
+    const ymd = formatLocalYmd(date);
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return `${ymd} ${hh}:${mm}`;
+  }
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',

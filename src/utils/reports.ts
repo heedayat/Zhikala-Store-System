@@ -1,6 +1,7 @@
 import type { Product, Sale } from '../types/inventory';
 import { isLowStock } from './formatters';
-import { formatLocalYmd, formatSaleDateTime } from './sales';
+import { getTranslations, getWeekdayLabelLocalized, type AppLanguage } from './i18n';
+import { formatLocalYmd, formatSaleDateTime, normalizePaymentMethod } from './sales';
 
 export type ReportPeriodType = 'weekly' | 'monthly';
 
@@ -23,8 +24,11 @@ export function normalizeWeekStartDay(day: number | undefined | null): number {
   return DEFAULT_WEEK_START_DAY;
 }
 
-export function getWeekStartDayName(day: number): string {
+export function getWeekStartDayName(day: number, lang: AppLanguage = 'en'): string {
   const normalized = normalizeWeekStartDay(day);
+  if (lang === 'ku') {
+    return getWeekdayLabelLocalized(normalized, 'ku');
+  }
   return WEEKDAY_OPTIONS.find((opt) => opt.value === normalized)?.label ?? 'Saturday';
 }
 
@@ -54,9 +58,22 @@ function endOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
 }
 
-function formatWeekRangeLabel(start: Date, end: Date): string {
+function formatWeekRangeLabel(start: Date, end: Date, lang: AppLanguage = 'en'): string {
   const sameYear = start.getFullYear() === end.getFullYear();
   const sameMonth = sameYear && start.getMonth() === end.getMonth();
+
+  if (lang === 'ku') {
+    const monthsShort = getTranslations('ku').monthsShort;
+    const startMonth = monthsShort[start.getMonth() as keyof typeof monthsShort];
+    const endMonth = monthsShort[end.getMonth() as keyof typeof monthsShort];
+    if (sameMonth) {
+      return `${start.getDate()}–${end.getDate()} ${startMonth} ${end.getFullYear()}`;
+    }
+    if (sameYear) {
+      return `${start.getDate()} ${startMonth} – ${end.getDate()} ${endMonth} ${end.getFullYear()}`;
+    }
+    return `${start.getDate()} ${startMonth} ${start.getFullYear()} – ${end.getDate()} ${endMonth} ${end.getFullYear()}`;
+  }
 
   if (sameMonth) {
     const monthStr = new Intl.DateTimeFormat('en-US', { month: 'short' }).format(start);
@@ -81,7 +98,12 @@ function formatWeekRangeLabel(start: Date, end: Date): string {
   return `${fullFmt.format(start)} – ${fullFmt.format(end)}`;
 }
 
-function formatMonthLabel(date: Date): string {
+function formatMonthLabel(date: Date, lang: AppLanguage = 'en'): string {
+  if (lang === 'ku') {
+    const months = getTranslations('ku').months;
+    const monthName = months[date.getMonth() as keyof typeof months];
+    return `${monthName} ${date.getFullYear()}`;
+  }
   return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
 }
 
@@ -89,7 +111,8 @@ export function getReportPeriodBounds(
   periodType: ReportPeriodType,
   periodOffset: number,
   weekStartDay: number = DEFAULT_WEEK_START_DAY,
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  lang: AppLanguage = 'en'
 ): ReportPeriodBounds {
   const safeStartDay = normalizeWeekStartDay(weekStartDay);
   const safeOffset = Number.isFinite(periodOffset) ? Math.trunc(periodOffset) : 0;
@@ -123,8 +146,8 @@ export function getReportPeriodBounds(
       prevEnd,
       prevStartMs: prevStart.getTime(),
       prevEndMs: prevEnd.getTime(),
-      label: formatWeekRangeLabel(start, end),
-      prevLabel: formatWeekRangeLabel(prevStart, prevEnd),
+      label: formatWeekRangeLabel(start, end, lang),
+      prevLabel: formatWeekRangeLabel(prevStart, prevEnd, lang),
       startYmd: formatLocalYmd(start),
       endYmd: formatLocalYmd(end),
     };
@@ -156,8 +179,8 @@ export function getReportPeriodBounds(
     prevEnd,
     prevStartMs: prevStart.getTime(),
     prevEndMs: prevEnd.getTime(),
-    label: formatMonthLabel(start),
-    prevLabel: formatMonthLabel(prevStart),
+    label: formatMonthLabel(start, lang),
+    prevLabel: formatMonthLabel(prevStart, lang),
     startYmd: formatLocalYmd(start),
     endYmd: formatLocalYmd(end),
   };
@@ -165,6 +188,12 @@ export function getReportPeriodBounds(
 
 export interface PeriodMetricsSummary {
   totalSales: number;
+  cashSalesTotal: number;
+  cashSalesCount: number;
+  digitalSalesTotal: number;
+  digitalSalesCount: number;
+  fibSalesTotal: number;
+  cardSalesTotal: number;
   salesCount: number;
   itemsSold: number;
   averageSaleValue: number;
@@ -250,12 +279,31 @@ export function computePercentChange(current: number, previous: number): number 
 
 function summarizeCompletedSales(sales: Sale[]): PeriodMetricsSummary {
   let totalSales = 0;
+  let cashSalesTotal = 0;
+  let cashSalesCount = 0;
+  let digitalSalesTotal = 0;
+  let digitalSalesCount = 0;
+  let fibSalesTotal = 0;
+  let cardSalesTotal = 0;
   let itemsSold = 0;
   let totalCost = 0;
   let totalDiscountGiven = 0;
 
   for (const sale of sales) {
     totalSales += sale.totalAmount;
+    const method = normalizePaymentMethod(sale.paymentMethod);
+    if (method === 'fib') {
+      fibSalesTotal += sale.totalAmount;
+      digitalSalesTotal += sale.totalAmount;
+      digitalSalesCount += 1;
+    } else if (method === 'card') {
+      cardSalesTotal += sale.totalAmount;
+      digitalSalesTotal += sale.totalAmount;
+      digitalSalesCount += 1;
+    } else {
+      cashSalesTotal += sale.totalAmount;
+      cashSalesCount += 1;
+    }
     for (const item of sale.items) {
       itemsSold += item.quantity;
       totalCost += item.costPrice * item.quantity;
@@ -264,16 +312,23 @@ function summarizeCompletedSales(sales: Sale[]): PeriodMetricsSummary {
   }
 
   const salesCount = sales.length;
-  const averageSaleValue = salesCount > 0 ? Math.round(totalSales / salesCount) : 0;
-  const grossProfit = totalSales - totalCost;
+  const averageSaleValue =
+    salesCount > 0 ? Math.round((totalSales / salesCount) * 100) / 100 : 0;
+  const grossProfit = Math.round((totalSales - totalCost) * 100) / 100;
 
   return {
-    totalSales,
+    totalSales: Math.round(totalSales * 100) / 100,
+    cashSalesTotal: Math.round(cashSalesTotal * 100) / 100,
+    cashSalesCount,
+    digitalSalesTotal: Math.round(digitalSalesTotal * 100) / 100,
+    digitalSalesCount,
+    fibSalesTotal: Math.round(fibSalesTotal * 100) / 100,
+    cardSalesTotal: Math.round(cardSalesTotal * 100) / 100,
     salesCount,
     itemsSold,
     averageSaleValue,
     grossProfit,
-    totalDiscountGiven,
+    totalDiscountGiven: Math.round(totalDiscountGiven * 100) / 100,
   };
 }
 
@@ -285,13 +340,16 @@ export function buildPeriodReport(
     periodOffset: number;
     weekStartDay?: number;
     referenceDate?: Date;
+    lang?: AppLanguage;
   }
 ): PeriodReport {
+  const lang: AppLanguage = options.lang ?? 'en';
   const period = getReportPeriodBounds(
     options.periodType,
     options.periodOffset,
     options.weekStartDay ?? DEFAULT_WEEK_START_DAY,
-    options.referenceDate ?? new Date()
+    options.referenceDate ?? new Date(),
+    lang
   );
 
   // Ignore voided sales everywhere in reports
@@ -335,18 +393,32 @@ export function buildPeriodReport(
     day: 'numeric',
     year: 'numeric',
   });
+  const kuWeekdaysShort = getTranslations('ku').weekdaysShort;
+  const kuMonthsShort = getTranslations('ku').monthsShort;
 
   while (dayCursor.getTime() <= period.endMs) {
     const ymd = formatLocalYmd(dayCursor);
+    const dayIdx = dayCursor.getDay() as keyof typeof kuWeekdaysShort;
+    const monthIdx = dayCursor.getMonth() as keyof typeof kuMonthsShort;
+
     const axisLabel =
-      period.periodType === 'weekly'
+      lang === 'ku'
+        ? period.periodType === 'weekly'
+          ? `${kuWeekdaysShort[dayIdx]} ${dayCursor.getDate()}`
+          : String(dayCursor.getDate())
+        : period.periodType === 'weekly'
         ? `${shortWeekdayFmt.format(dayCursor)} ${dayCursor.getDate()}`
         : String(dayCursor.getDate());
+
+    const fullDateLabel =
+      lang === 'ku'
+        ? `${kuWeekdaysShort[dayIdx]}، ${dayCursor.getDate()} ${kuMonthsShort[monthIdx]} ${dayCursor.getFullYear()}`
+        : fullDateFmt.format(dayCursor);
 
     dailyMap.set(ymd, {
       dateYmd: ymd,
       axisLabel,
-      fullDateLabel: fullDateFmt.format(dayCursor),
+      fullDateLabel,
       totalSales: 0,
       grossProfit: 0,
       salesCount: 0,
@@ -521,6 +593,22 @@ export function buildReportCsv(
       report.summary.totalSales,
       report.previousSummary.totalSales,
       report.changes.totalSalesPct === null ? 'N/A' : `${report.changes.totalSalesPct}%`,
+    ])
+  );
+  lines.push(
+    csvRow([
+      `Cash Sales (${currency})`,
+      report.summary.cashSalesTotal,
+      report.previousSummary.cashSalesTotal,
+      '—',
+    ])
+  );
+  lines.push(
+    csvRow([
+      `FIB / Digital Sales (${currency})`,
+      report.summary.digitalSalesTotal,
+      report.previousSummary.digitalSalesTotal,
+      '—',
     ])
   );
   lines.push(

@@ -198,6 +198,54 @@ describe('period report metrics, void exclusion, and stock analytics', () => {
     const csv = buildReportCsv(report, 'Little Wonders', 'IQD');
     assert.ok(csv.includes('Little Wonders'));
     assert.ok(csv.includes('SUMMARY'));
+    assert.ok(csv.includes('Cash Sales (IQD)'));
+    assert.ok(csv.includes('FIB / Digital Sales (IQD)'));
     assert.ok(csv.includes('TOP 10 BEST-SELLING PRODUCTS'));
+  });
+
+  it('splits total sales accurately between Cash and FIB / Digital sales', () => {
+    const ref = new Date(2026, 10, 13, 14, 0, 0);
+    const sales: Sale[] = [
+      makeSale({
+        id: 'cash-sale',
+        paymentMethod: 'cash',
+        totalAmount: 50000,
+        createdAt: new Date(2026, 10, 13, 10, 0, 0),
+      }),
+      makeSale({
+        id: 'fib-sale',
+        paymentMethod: 'fib',
+        totalAmount: 30000,
+        createdAt: new Date(2026, 10, 13, 11, 0, 0),
+      }),
+      makeSale({
+        id: 'card-sale',
+        paymentMethod: 'card',
+        totalAmount: 20000,
+        createdAt: new Date(2026, 10, 13, 12, 0, 0),
+      }),
+      makeSale({
+        id: 'voided-fib',
+        paymentMethod: 'fib',
+        status: 'voided',
+        totalAmount: 90000,
+        createdAt: new Date(2026, 10, 13, 13, 0, 0),
+      }),
+    ];
+
+    const report = buildPeriodReport(sales, [makeProduct()], {
+      periodType: 'weekly',
+      periodOffset: 0,
+      weekStartDay: 6,
+      referenceDate: ref,
+    });
+
+    assert.equal(report.summary.totalSales, 100000);
+    assert.equal(report.summary.cashSalesTotal, 50000);
+    assert.equal(report.summary.cashSalesCount, 1);
+    assert.equal(report.summary.digitalSalesTotal, 50000);
+    assert.equal(report.summary.digitalSalesCount, 2);
+    assert.equal(report.summary.fibSalesTotal, 30000);
+    assert.equal(report.summary.cardSalesTotal, 20000);
   });
 });

@@ -8,8 +8,11 @@ import {
   computeDailyReconciliation,
   filterSales,
   formatLocalYmd,
+  getPaymentMethodLabel,
+  isDigitalPaymentMethod,
   isLineBelowCost,
   isLineExceedingStock,
+  normalizePaymentMethod,
   removeCartItem,
   stepCartItemQuantity,
   updateCartItemQuantity,
@@ -114,7 +117,7 @@ describe('reconciliation & history filtering', () => {
         totalAmount: 50000,
         totalCost: 30000,
         itemCount: 2,
-        paymentMethod: 'cash',
+        paymentMethod: 'fib',
         note: 'Paid via FIB',
         status: 'completed',
         createdAt: new Date(2026, 10, 13, 14, 15, 0),
@@ -138,7 +141,7 @@ describe('reconciliation & history filtering', () => {
         totalAmount: 99000,
         totalCost: 50000,
         itemCount: 3,
-        paymentMethod: 'cash',
+        paymentMethod: 'card',
         note: 'Voided FIB',
         status: 'voided',
         createdAt: new Date(2026, 10, 13, 16, 0, 0),
@@ -159,6 +162,10 @@ describe('reconciliation & history filtering', () => {
 
     const recon = computeDailyReconciliation(sales, ref);
     assert.equal(recon.todayTotal, 70000);
+    assert.equal(recon.todayCashTotal, 20000);
+    assert.equal(recon.todayDigitalTotal, 50000);
+    assert.equal(recon.todayCashCount, 1);
+    assert.equal(recon.todayDigitalCount, 1);
     assert.equal(recon.todaySalesCount, 2);
     assert.equal(recon.todayVoidedCount, 1);
     assert.deepEqual(
@@ -171,5 +178,13 @@ describe('reconciliation & history filtering', () => {
       todayFiltered.map((s) => s.id),
       ['s3', 's1', 's2']
     );
+
+    assert.equal(getPaymentMethodLabel('cash'), 'Cash');
+    assert.equal(getPaymentMethodLabel('fib'), 'FIB');
+    assert.equal(getPaymentMethodLabel('card'), 'FastPay / Card');
+    assert.equal(normalizePaymentMethod('unknown'), 'cash');
+    assert.equal(isDigitalPaymentMethod('cash'), false);
+    assert.equal(isDigitalPaymentMethod('fib'), true);
+    assert.equal(isDigitalPaymentMethod('card'), true);
   });
 });

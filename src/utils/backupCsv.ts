@@ -1,6 +1,6 @@
 import type { Product, Sale, StockMovement } from '../types/inventory';
 import { escapeCsvCell } from './reports';
-import { formatLocalYmd, formatSaleDateTime } from './sales';
+import { formatLocalYmd, formatSaleDateTime, getPaymentMethodLabel } from './sales';
 
 function toCsv(rows: (string | number)[][]): string {
   return rows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n');
@@ -116,7 +116,7 @@ export function buildSalesBackupCsv(sales: Sale[], currency: string): string {
       s.id,
       formatSaleDateTime(s.createdAt),
       s.status,
-      s.paymentMethod,
+      getPaymentMethodLabel(s.paymentMethod),
       s.itemCount,
       listTotal,
       totalDiscount,
