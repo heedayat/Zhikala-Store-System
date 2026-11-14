@@ -7,6 +7,7 @@ import {
   completeSaleTransaction,
   createProduct,
   createShopUser,
+  deleteShopUser,
   generateDocumentId,
   recordStockAdjustment,
   saveShopSettings,
@@ -47,6 +48,7 @@ import {
 import { DEFAULT_WEEK_START_DAY, normalizeWeekStartDay } from './utils/reports';
 import { normalizePaymentMethod } from './utils/sales';
 import {
+  canDeleteUser,
   canModifyUserRole,
   canToggleUserActive,
   isAuthorizedUserRecord,
@@ -590,6 +592,18 @@ export default function App() {
     }
   }
 
+  const currentDisplayEmail = previewMode
+    ? currentUserRecord?.email ?? 'gamerhidayatgamer@gmail.com'
+    : currentUserRecord?.email ?? normalizeEmail(user?.email ?? '');
+  const currentActorName =
+    currentUserRecord?.displayName?.trim() ||
+    user?.displayName?.trim() ||
+    currentDisplayEmail;
+  const currentRecordedBy = {
+    displayName: currentActorName.slice(0, 80),
+    email: currentDisplayEmail,
+  };
+
   async function handleSaveProduct(
     productId: string,
     payload: ValidatedProductPayload,
@@ -634,6 +648,8 @@ export default function App() {
           reason: isNew ? 'New stock arrived' : 'Correction',
           note: isNew ? 'Initial stock on product creation' : 'Adjusted in product editor',
           costPrice: isNew ? payload.costPrice : null,
+          recordedByName: currentRecordedBy.displayName,
+          recordedByEmail: currentRecordedBy.email,
           createdAt: new Date(),
         };
         updatedMovements = [movement, ...movements];
@@ -647,9 +663,9 @@ export default function App() {
 
     if (!user) throw new Error(t.auth.mustBeSignedIn);
     if (isNew) {
-      await createProduct(user.uid, productId, payload);
+      await createProduct(user.uid, productId, payload, currentRecordedBy);
     } else {
-      await updateProduct(user.uid, productId, payload);
+      await updateProduct(user.uid, productId, payload, currentRecordedBy);
     }
   }
 
@@ -692,6 +708,8 @@ export default function App() {
         reason: adjustment.reason,
         note: adjustment.note,
         costPrice: adjustment.costPrice,
+        recordedByName: currentRecordedBy.displayName,
+        recordedByEmail: currentRecordedBy.email,
         createdAt: new Date(),
       };
       const updatedMovements = [movement, ...movements];
@@ -703,7 +721,7 @@ export default function App() {
     }
 
     if (!user) throw new Error(t.auth.mustBeSignedIn);
-    await recordStockAdjustment(user.uid, adjustment);
+    await recordStockAdjustment(user.uid, adjustment, currentRecordedBy);
   }
 
   async function handleCompleteSale(
@@ -744,6 +762,8 @@ export default function App() {
           note: cleanNote,
           costPrice: null,
           saleId,
+          recordedByName: currentRecordedBy.displayName,
+          recordedByEmail: currentRecordedBy.email,
           createdAt: now,
         });
       }
@@ -758,6 +778,8 @@ export default function App() {
         paymentMethod: cleanMethod,
         note: cleanNote,
         status: 'completed',
+        recordedByName: currentRecordedBy.displayName,
+        recordedByEmail: currentRecordedBy.email,
         createdAt: now,
         updatedAt: now,
         voidedAt: null,
@@ -773,7 +795,13 @@ export default function App() {
     }
 
     if (!user) throw new Error(t.auth.mustBeSignedIn);
-    const saleId = await completeSaleTransaction(user.uid, lineItems, cleanNote, cleanMethod);
+    const saleId = await completeSaleTransaction(
+      user.uid,
+      lineItems,
+      cleanNote,
+      cleanMethod,
+      currentRecordedBy
+    );
     return {
       id: saleId,
       ownerId: user.uid,
@@ -784,6 +812,8 @@ export default function App() {
       paymentMethod: cleanMethod,
       note: cleanNote,
       status: 'completed',
+      recordedByName: currentRecordedBy.displayName,
+      recordedByEmail: currentRecordedBy.email,
       createdAt: new Date(),
     };
   }
@@ -823,6 +853,8 @@ export default function App() {
           note: '',
           costPrice: null,
           saleId,
+          recordedByName: currentRecordedBy.displayName,
+          recordedByEmail: currentRecordedBy.email,
           createdAt: now,
         });
       }
@@ -842,7 +874,7 @@ export default function App() {
     }
 
     if (!user) throw new Error(t.auth.mustBeSignedIn);
-    await voidSaleTransaction(user.uid, saleId);
+    await voidSaleTransaction(user.uid, saleId, currentRecordedBy);
   }
 
   async function handleArchiveToggle(productId: string, archive: boolean) {
@@ -1001,6 +1033,32 @@ export default function App() {
     }
 
     await updateShopUser(emailId, updates);
+  }
+
+  async function handleDeleteUser(rawEmail: string) {
+    if (!isManager) {
+      throw new Error(t.validation.onlyManagersDeleteUsers);
+    }
+
+    const emailId = normalizeEmail(rawEmail);
+    const targetUser = usersList.find((u) => normalizeEmail(u.email) === emailId);
+    if (!targetUser) {
+      throw new Error(t.validation.onlyManagersDeleteUsers);
+    }
+
+    const guard = canDeleteUser(targetUser, displayEmail, usersList, lang);
+    if (!guard.allowed) {
+      throw new Error(guard.reason ?? t.validation.onlyManagersDeleteUsers);
+    }
+
+    if (previewMode) {
+      const nextUsers = usersList.filter((u) => normalizeEmail(u.email) !== emailId);
+      setUsersList(nextUsers);
+      persistPreviewUsers(nextUsers);
+      return;
+    }
+
+    await deleteShopUser(emailId);
   }
 
   if (!authReady) {
@@ -1182,6 +1240,7 @@ export default function App() {
         <SellView
           products={products}
           sales={sales}
+          users={usersList}
           isLoadingSales={isLoadingSales}
           loadError={salesLoadError}
           shopName={effectiveShopName}
@@ -1197,6 +1256,7 @@ export default function App() {
         <StockView
           products={products}
           movements={movements}
+          users={usersList}
           isLoadingMovements={isLoadingMovements}
           loadError={movementsLoadError}
           currency={effectiveCurrency}
@@ -1210,12 +1270,14 @@ export default function App() {
           currentUserEmail={displayEmail}
           onAddUser={handleAddUser}
           onUpdateUser={handleUpdateUser}
+          onDeleteUser={handleDeleteUser}
         />
       ) : (
         <ReportsView
           products={products}
           sales={sales}
           movements={movements}
+          users={usersList}
           isLoading={isLoadingProducts || isLoadingSales}
           loadError={loadError ?? salesLoadError}
           shopName={effectiveShopName}

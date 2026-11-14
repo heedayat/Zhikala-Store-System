@@ -11,6 +11,7 @@ import { useTranslation } from '../contexts/I18nContext';
 import {
   ADD_STOCK_REASONS,
   REMOVE_STOCK_REASONS,
+  type AppUser,
   type Product,
   type StockMovement,
   type StockMovementType,
@@ -23,11 +24,13 @@ import {
   type StockAdjustmentValidationErrors,
   type ValidatedStockAdjustment,
 } from '../utils/stockMovements';
+import { resolveRecordedByLabel } from '../utils/users';
 import { ProductPicker } from './ProductPicker';
 
 interface StockViewProps {
   products: Product[];
   movements: StockMovement[];
+  users?: AppUser[];
   isLoadingMovements: boolean;
   loadError: string | null;
   currency: string;
@@ -37,6 +40,7 @@ interface StockViewProps {
 export function StockView({
   products,
   movements,
+  users = [],
   isLoadingMovements,
   loadError,
   currency,
@@ -552,6 +556,7 @@ export function StockView({
                   {filteredMovements.map((movement) => {
                     const isPositive = movement.quantityChange > 0;
                     const typeLabel = movementTypeLabel(movement.type);
+                    const recordedBy = resolveRecordedByLabel(movement, users);
                     const toneClass =
                       movement.type === 'void'
                         ? 'text-blue-700'
@@ -602,8 +607,17 @@ export function StockView({
                             <span className="text-slate-400">—</span>
                           )}
                         </td>
-                        <td className="py-3 ps-3 pe-6 align-middle text-xs text-slate-600 max-w-xs truncate">
-                          {movement.note ? movement.note : <span className="text-slate-400">—</span>}
+                        <td className="py-3 ps-3 pe-6 align-middle text-xs text-slate-600 max-w-xs">
+                          {movement.note ? (
+                            <p className="truncate">{movement.note}</p>
+                          ) : !recordedBy ? (
+                            <span className="text-slate-400">—</span>
+                          ) : null}
+                          {recordedBy && (
+                            <p dir="auto" className="text-[11px] text-slate-500 truncate">
+                              {t.common.recordedByPrefix} {recordedBy}
+                            </p>
+                          )}
                         </td>
                       </tr>
                     );
@@ -617,6 +631,7 @@ export function StockView({
               {filteredMovements.map((movement) => {
                 const isPositive = movement.quantityChange > 0;
                 const typeLabel = movementTypeLabel(movement.type);
+                const recordedBy = resolveRecordedByLabel(movement, users);
                 const toneClass =
                   movement.type === 'void'
                     ? 'text-blue-700'
@@ -661,9 +676,15 @@ export function StockView({
                       </span>
                     </div>
 
-                    {(movement.note || (movement.costPrice !== undefined && movement.costPrice !== null)) && (
+                    {(movement.note ||
+                      recordedBy ||
+                      (movement.costPrice !== undefined && movement.costPrice !== null)) && (
                       <div className="flex items-center justify-between gap-2 text-xs text-slate-500 pt-0.5">
-                        <span className="truncate">{movement.note || ''}</span>
+                        <span dir="auto" className="truncate">
+                          {[movement.note, recordedBy ? `${t.common.recordedByPrefix} ${recordedBy}` : '']
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
                         {movement.costPrice !== undefined && movement.costPrice !== null && (
                           <span className="shrink-0">
                             {t.stock.costPrefix}:{' '}

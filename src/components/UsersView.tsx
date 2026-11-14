@@ -4,6 +4,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Trash2,
   UserCheck,
   UserMinus,
   Users,
@@ -14,6 +15,7 @@ import type { AppUser, UserRole } from '../types/inventory';
 import { formatActionError, formatNumber } from '../utils/formatters';
 import { getTranslations, interpolate, type AppLanguage } from '../utils/i18n';
 import {
+  canDeleteUser,
   canModifyUserRole,
   canToggleUserActive,
   countActiveManagers,
@@ -34,6 +36,7 @@ interface UsersViewProps {
     email: string,
     updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active'>>
   ) => Promise<void>;
+  onDeleteUser: (email: string) => Promise<void>;
 }
 
 type PendingConfirmation =
@@ -45,6 +48,10 @@ type PendingConfirmation =
       type: 'demote';
       user: AppUser;
       nextRole: UserRole;
+    }
+  | {
+      type: 'delete';
+      user: AppUser;
     };
 
 function formatUserDate(date: Date | null | undefined, lang: AppLanguage): string {
@@ -247,6 +254,7 @@ export function UsersView({
   currentUserEmail,
   onAddUser,
   onUpdateUser,
+  onDeleteUser,
 }: UsersViewProps) {
   const { lang, t, roleLabel } = useTranslation();
   const [search, setSearch] = useState('');
@@ -345,6 +353,16 @@ export function UsersView({
     );
   }
 
+  function handleDeleteClick(targetUser: AppUser) {
+    const guard = canDeleteUser(targetUser, currentUserEmail, users, lang);
+    if (!guard.allowed) {
+      setActionError(guard.reason ?? t.validation.onlyManagersDeleteUsers);
+      return;
+    }
+    setConfirmError(null);
+    setPendingConfirm({ type: 'delete', user: targetUser });
+  }
+
   async function handleConfirmAction() {
     if (!pendingConfirm) return;
     setBusyEmail(pendingConfirm.user.email);
@@ -355,7 +373,10 @@ export function UsersView({
     const targetDisplay = pendingConfirm.user.displayName || pendingConfirm.user.email;
 
     try {
-      if (pendingConfirm.type === 'deactivate') {
+      if (pendingConfirm.type === 'delete') {
+        await onDeleteUser(pendingConfirm.user.email);
+        setActionNotice(t.users.deletedNotice);
+      } else if (pendingConfirm.type === 'deactivate') {
         await onUpdateUser(pendingConfirm.user.email, { active: false });
         setActionNotice(interpolate(t.users.deactivatedNotice, { name: targetDisplay }));
       } else {
@@ -568,7 +589,7 @@ export function UsersView({
                       <th scope="col" className="py-3 px-4 w-36">
                         {t.users.colAdded}
                       </th>
-                      <th scope="col" className="py-3 px-5 text-end w-40">
+                      <th scope="col" className="py-3 px-5 text-end w-60">
                         {t.users.colActions}
                       </th>
                     </tr>
@@ -597,6 +618,7 @@ export function UsersView({
                         users,
                         lang
                       );
+                      const deleteGuard = canDeleteUser(userRow, currentUserEmail, users, lang);
                       const isRowBusy = busyEmail === userRow.email;
                       const disableRoleSelect =
                         isRowBusy ||
@@ -606,6 +628,8 @@ export function UsersView({
                         ? t.users.cannotChangeOwnRole
                         : canOwnerGuard.reason ?? canCashierGuard.reason;
                       const disableDeactivate = userRow.active && (isRowBusy || !deactivateGuard.allowed);
+                      const disableDelete = isRowBusy || !deleteGuard.allowed;
+                      const displayLabel = userRow.displayName || userRow.email;
 
                       return (
                         <tr
@@ -682,34 +706,53 @@ export function UsersView({
                           </td>
 
                           <td className="py-3.5 px-5 align-middle text-end">
-                            {userRow.active ? (
+                            <div className="inline-flex items-center justify-end gap-2">
+                              {userRow.active ? (
+                                <button
+                                  key="deactivate"
+                                  type="button"
+                                  disabled={disableDeactivate}
+                                  title={
+                                    disableDeactivate && deactivateGuard.reason
+                                      ? deactivateGuard.reason
+                                      : t.users.revokeAccessTitle
+                                  }
+                                  onClick={() => handleActiveToggleClick(userRow)}
+                                  className="h-8 px-3 rounded-lg border border-amber-200 bg-white text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
+                                >
+                                  <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
+                                  {t.users.deactivate}
+                                </button>
+                              ) : (
+                                <button
+                                  key="reactivate"
+                                  type="button"
+                                  disabled={isRowBusy}
+                                  onClick={() => handleActiveToggleClick(userRow)}
+                                  className="h-8 px-3 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
+                                >
+                                  <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                                  {t.users.reactivate}
+                                </button>
+                              )}
+
                               <button
-                                key="deactivate"
                                 type="button"
-                                disabled={disableDeactivate}
+                                data-testid={`delete-user-${userRow.email}`}
+                                disabled={disableDelete}
+                                aria-label={interpolate(t.users.deleteAria, { name: displayLabel })}
                                 title={
-                                  disableDeactivate && deactivateGuard.reason
-                                    ? deactivateGuard.reason
-                                    : t.users.revokeAccessTitle
+                                  disableDelete && deleteGuard.reason
+                                    ? deleteGuard.reason
+                                    : t.users.delete
                                 }
-                                onClick={() => handleActiveToggleClick(userRow)}
-                                className="h-8 px-3 rounded-lg border border-red-200 bg-white text-xs font-semibold text-red-700 hover:bg-red-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
+                                onClick={() => handleDeleteClick(userRow)}
+                                className="h-8 px-3 rounded-lg border border-red-200 bg-red-50/70 text-xs font-semibold text-red-700 hover:bg-red-100 hover:border-red-300 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
                               >
-                                <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
-                                {t.users.deactivate}
+                                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                                {t.users.delete}
                               </button>
-                            ) : (
-                              <button
-                                key="reactivate"
-                                type="button"
-                                disabled={isRowBusy}
-                                onClick={() => handleActiveToggleClick(userRow)}
-                                className="h-8 px-3 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
-                              >
-                                <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                {t.users.reactivate}
-                              </button>
-                            )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -743,12 +786,15 @@ export function UsersView({
                     users,
                     lang
                   );
+                  const deleteGuard = canDeleteUser(userRow, currentUserEmail, users, lang);
                   const isRowBusy = busyEmail === userRow.email;
                   const disableRoleSelect =
                     isRowBusy ||
                     isSelf ||
                     (userRow.role === 'admin' && !canOwnerGuard.allowed && !canCashierGuard.allowed);
                   const disableDeactivate = userRow.active && (isRowBusy || !deactivateGuard.allowed);
+                  const disableDelete = isRowBusy || !deleteGuard.allowed;
+                  const displayLabel = userRow.displayName || userRow.email;
 
                   return (
                     <div key={`mobile-${userRow.email}`} className="p-4 space-y-3">
@@ -785,7 +831,7 @@ export function UsersView({
                         )}
                       </div>
 
-                      <div className="flex items-center justify-between gap-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <select
                           aria-label={interpolate(t.users.mobileRoleForAria, {
                             email: userRow.email,
@@ -798,7 +844,7 @@ export function UsersView({
                               handleRoleSelectChange(userRow, next);
                             }
                           }}
-                          className="flex-1 min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed focus:outline-none focus:border-blue-600"
+                          className="flex-1 min-w-[115px] min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed focus:outline-none focus:border-blue-600"
                         >
                           <option value="admin">{t.roles.admin}</option>
                           <option value="owner" disabled={!canOwnerGuard.allowed}>
@@ -809,27 +855,51 @@ export function UsersView({
                           </option>
                         </select>
 
-                        {userRow.active ? (
+                        <div className="flex items-center gap-2 shrink-0">
+                          {userRow.active ? (
+                            <button
+                              type="button"
+                              disabled={disableDeactivate}
+                              title={
+                                disableDeactivate && deactivateGuard.reason
+                                  ? deactivateGuard.reason
+                                  : t.users.revokeAccessTitle
+                              }
+                              onClick={() => handleActiveToggleClick(userRow)}
+                              className="min-h-[40px] px-3 rounded-lg border border-amber-200 bg-white text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                            >
+                              <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
+                              {t.users.deactivate}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isRowBusy}
+                              onClick={() => handleActiveToggleClick(userRow)}
+                              className="min-h-[40px] px-3 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                              {t.users.reactivate}
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            disabled={disableDeactivate}
-                            onClick={() => handleActiveToggleClick(userRow)}
-                            className="min-h-[40px] px-3.5 rounded-lg border border-red-200 bg-white text-xs font-semibold text-red-700 hover:bg-red-50 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                            data-testid={`mobile-delete-user-${userRow.email}`}
+                            disabled={disableDelete}
+                            aria-label={interpolate(t.users.deleteAria, { name: displayLabel })}
+                            title={
+                              disableDelete && deleteGuard.reason
+                                ? deleteGuard.reason
+                                : t.users.delete
+                            }
+                            onClick={() => handleDeleteClick(userRow)}
+                            className="min-h-[40px] px-3 rounded-lg border border-red-200 bg-red-50/70 text-xs font-semibold text-red-700 hover:bg-red-100 hover:border-red-300 disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                           >
-                            <UserMinus className="w-3.5 h-3.5" aria-hidden="true" />
-                            {t.users.deactivate}
+                            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            {t.users.delete}
                           </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={isRowBusy}
-                            onClick={() => handleActiveToggleClick(userRow)}
-                            className="min-h-[40px] px-3.5 rounded-lg border border-emerald-200 bg-white text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                          >
-                            <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                            {t.users.reactivate}
-                          </button>
-                        )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -853,36 +923,50 @@ export function UsersView({
       <ConfirmDialog
         open={pendingConfirm !== null}
         title={
-          pendingConfirm?.type === 'deactivate'
-            ? t.users.deactivateTitle
-            : interpolate(t.users.changeRoleTitle, {
-                role: pendingConfirm ? roleLabel(pendingConfirm.nextRole) : '',
-              })
+          pendingConfirm?.type === 'delete'
+            ? t.users.deleteTitle
+            : pendingConfirm?.type === 'deactivate'
+              ? t.users.deactivateTitle
+              : interpolate(t.users.changeRoleTitle, {
+                  role: pendingConfirm ? roleLabel(pendingConfirm.nextRole) : '',
+                })
         }
         description={
-          pendingConfirm?.type === 'deactivate'
-            ? interpolate(t.users.deactivateDesc, {
+          pendingConfirm?.type === 'delete'
+            ? interpolate(t.users.deleteDesc, {
                 name: pendingConfirm.user.displayName || pendingConfirm.user.email,
                 email: pendingConfirm.user.email,
               })
-            : pendingConfirm?.nextRole === 'cashier'
-              ? interpolate(t.users.demoteCashierDesc, {
+            : pendingConfirm?.type === 'deactivate'
+              ? interpolate(t.users.deactivateDesc, {
                   name: pendingConfirm.user.displayName || pendingConfirm.user.email,
                   email: pendingConfirm.user.email,
                 })
-              : interpolate(t.users.demoteOwnerDesc, {
-                  name: pendingConfirm?.user.displayName || pendingConfirm?.user.email || '',
-                  email: pendingConfirm?.user.email || '',
-                })
+              : pendingConfirm?.nextRole === 'cashier'
+                ? interpolate(t.users.demoteCashierDesc, {
+                    name: pendingConfirm.user.displayName || pendingConfirm.user.email,
+                    email: pendingConfirm.user.email,
+                  })
+                : interpolate(t.users.demoteOwnerDesc, {
+                    name: pendingConfirm?.user.displayName || pendingConfirm?.user.email || '',
+                    email: pendingConfirm?.user.email || '',
+                  })
         }
         confirmLabel={
-          pendingConfirm?.type === 'deactivate'
-            ? t.users.deactivateConfirm
-            : interpolate(t.users.changeRoleConfirm, {
-                role: pendingConfirm ? roleLabel(pendingConfirm.nextRole) : '',
-              })
+          pendingConfirm?.type === 'delete'
+            ? t.users.confirmDeleteBtn
+            : pendingConfirm?.type === 'deactivate'
+              ? t.users.deactivateConfirm
+              : interpolate(t.users.changeRoleConfirm, {
+                  role: pendingConfirm ? roleLabel(pendingConfirm.nextRole) : '',
+                })
         }
-        tone={pendingConfirm?.type === 'deactivate' ? 'danger' : 'warning'}
+        cancelLabel={t.common.cancel}
+        tone={
+          pendingConfirm?.type === 'delete' || pendingConfirm?.type === 'deactivate'
+            ? 'danger'
+            : 'warning'
+        }
         isBusy={busyEmail !== null}
         errorMessage={confirmError}
         onConfirm={handleConfirmAction}

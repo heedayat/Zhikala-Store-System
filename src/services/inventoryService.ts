@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   deleteField,
   doc,
   onSnapshot,
@@ -51,6 +52,24 @@ export class StockTransactionError extends Error {
     super(message);
     this.name = 'StockTransactionError';
   }
+}
+
+export interface RecordedByInput {
+  displayName?: string;
+  email?: string;
+}
+
+function buildRecordedByFields(recordedBy?: RecordedByInput): {
+  recordedByName?: string;
+  recordedByEmail?: string;
+} {
+  if (!recordedBy) return {};
+  const cleanName = (recordedBy.displayName ?? '').trim().slice(0, 80);
+  const cleanEmail = recordedBy.email ? normalizeEmail(recordedBy.email).slice(0, 254) : '';
+  return {
+    ...(cleanName ? { recordedByName: cleanName } : {}),
+    ...(cleanEmail ? { recordedByEmail: cleanEmail } : {}),
+  };
 }
 
 export function generateDocumentId(): string {
@@ -309,6 +328,18 @@ export async function updateShopUser(
   }
 }
 
+export async function deleteShopUser(rawEmail: string): Promise<void> {
+  const emailId = normalizeEmail(rawEmail);
+  const path = `${USERS_COLLECTION}/${emailId}`;
+  const docRef = doc(db, USERS_COLLECTION, emailId);
+
+  try {
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 export function subscribeToProducts(
   onData: (products: Product[]) => void,
   onError: (err: Error) => void
@@ -387,6 +418,8 @@ export function subscribeToStockMovements(
               ? null
               : Number(data.costPrice),
           saleId: data.saleId ? String(data.saleId) : undefined,
+          ...(data.recordedByName ? { recordedByName: String(data.recordedByName) } : {}),
+          ...(data.recordedByEmail ? { recordedByEmail: normalizeEmail(String(data.recordedByEmail)) } : {}),
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(),
         };
       });
@@ -436,6 +469,8 @@ export function subscribeToSales(
           paymentMethod: normalizePaymentMethod(data.paymentMethod),
           note: data.note ? String(data.note) : '',
           status: data.status === 'voided' ? 'voided' : 'completed',
+          ...(data.recordedByName ? { recordedByName: String(data.recordedByName) } : {}),
+          ...(data.recordedByEmail ? { recordedByEmail: normalizeEmail(String(data.recordedByEmail)) } : {}),
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(),
           updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : null,
           voidedAt: data.voidedAt?.toDate ? data.voidedAt.toDate() : null,
@@ -549,10 +584,12 @@ export async function saveShopSettings(
 export async function createProduct(
   ownerId: string,
   productId: string,
-  payload: ValidatedProductPayload
+  payload: ValidatedProductPayload,
+  recordedBy?: RecordedByInput
 ): Promise<void> {
   const path = `${PRODUCTS_COLLECTION}/${productId}`;
   const productRef = doc(db, PRODUCTS_COLLECTION, productId);
+  const recordedFields = buildRecordedByFields(recordedBy);
 
   const docData: Record<string, unknown> = {
     ownerId,
@@ -591,6 +628,7 @@ export async function createProduct(
           reason: 'New stock arrived',
           note: 'Initial stock on product creation',
           costPrice: payload.costPrice,
+          ...recordedFields,
           createdAt: serverTimestamp(),
         });
       }
@@ -603,10 +641,12 @@ export async function createProduct(
 export async function updateProduct(
   ownerId: string,
   productId: string,
-  payload: ValidatedProductPayload
+  payload: ValidatedProductPayload,
+  recordedBy?: RecordedByInput
 ): Promise<void> {
   const path = `${PRODUCTS_COLLECTION}/${productId}`;
   const productRef = doc(db, PRODUCTS_COLLECTION, productId);
+  const recordedFields = buildRecordedByFields(recordedBy);
 
   const updateData: Record<string, unknown> = {
     name: payload.name,
@@ -646,6 +686,7 @@ export async function updateProduct(
           quantityChange: delta,
           reason: 'Correction',
           note: 'Adjusted in product editor',
+          ...recordedFields,
           createdAt: serverTimestamp(),
         });
       }
@@ -658,12 +699,14 @@ export async function updateProduct(
 
 export async function recordStockAdjustment(
   ownerId: string,
-  adjustment: ValidatedStockAdjustment
+  adjustment: ValidatedStockAdjustment,
+  recordedBy?: RecordedByInput
 ): Promise<void> {
   const productRef = doc(db, PRODUCTS_COLLECTION, adjustment.productId);
   const movementId = generateDocumentId();
   const movementRef = doc(db, STOCK_MOVEMENTS_COLLECTION, movementId);
   const path = `${STOCK_MOVEMENTS_COLLECTION}/${movementId}`;
+  const recordedFields = buildRecordedByFields(recordedBy);
 
   try {
     await runTransaction(db, async (tx) => {
@@ -696,6 +739,7 @@ export async function recordStockAdjustment(
         type: adjustment.type,
         quantityChange: adjustment.quantityChange,
         reason: adjustment.reason,
+        ...recordedFields,
         createdAt: serverTimestamp(),
       };
       if (adjustment.note) {
@@ -718,7 +762,8 @@ export async function completeSaleTransaction(
   ownerId: string,
   lineItems: SaleLineItem[],
   note: string,
-  paymentMethod: PaymentMethod = 'cash'
+  paymentMethod: PaymentMethod = 'cash',
+  recordedBy?: RecordedByInput
 ): Promise<string> {
   if (lineItems.length === 0) {
     throw new StockTransactionError('Add at least one item before completing the sale.');
@@ -729,6 +774,7 @@ export async function completeSaleTransaction(
   const path = `${SALES_COLLECTION}/${saleId}`;
   const cleanNote = note.trim().slice(0, 500);
   const cleanPaymentMethod = normalizePaymentMethod(paymentMethod);
+  const recordedFields = buildRecordedByFields(recordedBy);
 
   // Aggregate quantities per productId so each product doc is read & updated once
   const qtyByProduct = new Map<string, { quantity: number; fallbackName: string }>();
@@ -795,6 +841,7 @@ export async function completeSaleTransaction(
         itemCount,
         paymentMethod: cleanPaymentMethod,
         status: 'completed',
+        ...recordedFields,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -822,6 +869,7 @@ export async function completeSaleTransaction(
           quantityChange: -agg.quantity,
           reason: 'Sale',
           saleId,
+          ...recordedFields,
           createdAt: serverTimestamp(),
         };
         if (cleanNote) {
@@ -840,10 +888,12 @@ export async function completeSaleTransaction(
 
 export async function voidSaleTransaction(
   ownerId: string,
-  saleId: string
+  saleId: string,
+  recordedBy?: RecordedByInput
 ): Promise<void> {
   const saleRef = doc(db, SALES_COLLECTION, saleId);
   const path = `${SALES_COLLECTION}/${saleId}`;
+  const recordedFields = buildRecordedByFields(recordedBy);
 
   try {
     await runTransaction(db, async (tx) => {
@@ -908,6 +958,7 @@ export async function voidSaleTransaction(
           quantityChange: agg.quantity,
           reason: 'Sale voided',
           saleId,
+          ...recordedFields,
           createdAt: serverTimestamp(),
         });
       }
@@ -945,11 +996,14 @@ export async function tryUploadProductPhotoToStorage(
     throw new Error('Firebase Storage is not configured.');
   }
 
+  const isWebp = blob.type === 'image/webp';
+  const ext = isWebp ? 'webp' : 'jpg';
+  const contentType = blob.type || 'image/jpeg';
   const photoId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const storageRef = ref(storage, `products/${ownerId}/${productId}/${photoId}.jpg`);
+  const storageRef = ref(storage, `products/${ownerId}/${productId}/${photoId}.${ext}`);
 
   const uploadWithTimeout = Promise.race([
-    uploadBytes(storageRef, blob, { contentType: 'image/jpeg' }).then((snap) =>
+    uploadBytes(storageRef, blob, { contentType }).then((snap) =>
       getDownloadURL(snap.ref)
     ),
     new Promise<never>((_, reject) =>

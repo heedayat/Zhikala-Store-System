@@ -15,7 +15,12 @@ import {
   getBackupFilename,
 } from '../utils/backupCsv';
 import { formatActionError, formatNumber, normalizeLogoUrl } from '../utils/formatters';
-import { compressLogoPng } from '../utils/imageCompression';
+import { formatOptimizedSizeBadge } from '../utils/i18n';
+import {
+  compressLogoImage,
+  getPreviewImageSizeBytes,
+  validateRawImageFile,
+} from '../utils/imageCompression';
 import { normalizeWeekStartDay } from '../utils/reports';
 import { LanguageToggle } from './LanguageToggle';
 import { StoreLogo } from './StoreLogo';
@@ -56,12 +61,15 @@ export function ShopSettingsModal({
   onSave,
   onClose,
 }: ShopSettingsModalProps) {
-  const { t, weekdayOptions } = useTranslation();
+  const { lang, t, weekdayOptions } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [shopName, setShopName] = useState(initialShopName);
   const [storeSubtitle, setStoreSubtitle] = useState(initialStoreSubtitle);
   const [receiptFooter, setReceiptFooter] = useState(initialReceiptFooter);
   const [logoUrl, setLogoUrl] = useState(initialLogoUrl);
+  const [logoSizeBytes, setLogoSizeBytes] = useState<number | null>(() =>
+    getPreviewImageSizeBytes(initialLogoUrl)
+  );
   const [isProcessingLogo, setIsProcessingLogo] = useState(false);
   const [currency, setCurrency] = useState<SupportedCurrency>(
     initialCurrency === 'USD' ? 'USD' : 'IQD'
@@ -84,16 +92,20 @@ export function ShopSettingsModal({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError(t.settings.errorImageType);
+
+    try {
+      validateRawImageFile(file);
+    } catch (err) {
+      setError(formatActionError(err, t.settings.errorImageType));
       return;
     }
 
     setIsProcessingLogo(true);
     setError(null);
     try {
-      const dataUrl = await compressLogoPng(file);
-      setLogoUrl(dataUrl);
+      const compressed = await compressLogoImage(file);
+      setLogoUrl(compressed.dataUrl);
+      setLogoSizeBytes(compressed.byteLength);
     } catch (err) {
       setError(formatActionError(err, t.settings.errorLogoProcess));
     } finally {
@@ -147,6 +159,7 @@ export function ShopSettingsModal({
   }
 
   const isDataLogo = logoUrl.startsWith('data:image/');
+  const resolvedLogoBytes = logoSizeBytes ?? getPreviewImageSizeBytes(logoUrl);
 
   return (
     <div
@@ -184,21 +197,34 @@ export function ShopSettingsModal({
             <LanguageToggle />
           </div>
 
-          {/* Store Logo PNG Upload / URL */}
+          {/* Store Logo Upload / URL */}
           <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <StoreLogo logoUrl={logoUrl} shopName={shopName || 'Store'} />
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="flex flex-col items-center gap-1 shrink-0">
+                  <StoreLogo logoUrl={logoUrl} shopName={shopName || 'Store'} />
+                </div>
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-slate-800">{t.settings.storeLogoLabel}</p>
                   <p className="text-[11px] text-slate-500 truncate">{t.settings.storeLogoHint}</p>
+                  {resolvedLogoBytes !== null && (
+                    <span
+                      data-testid="logo-size-badge"
+                      className="mt-1 inline-flex items-center px-2 py-0.5 rounded bg-white border border-slate-200 text-[10px] font-medium text-slate-600"
+                    >
+                      {formatOptimizedSizeBadge(resolvedLogoBytes, lang)}
+                    </span>
+                  )}
                 </div>
               </div>
 
               {logoUrl && (
                 <button
                   type="button"
-                  onClick={() => setLogoUrl('')}
+                  onClick={() => {
+                    setLogoUrl('');
+                    setLogoSizeBytes(null);
+                  }}
                   className="min-h-[36px] px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:text-red-700 hover:border-red-200 hover:bg-red-50 inline-flex items-center gap-1.5 transition-colors shrink-0"
                 >
                   <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -211,7 +237,7 @@ export function ShopSettingsModal({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/png,image/webp,image/jpeg,image/svg+xml"
+                accept="image/png,image/jpeg,image/webp,image/heic,image/heif,image/*,.heic,.heif"
                 aria-label={t.settings.uploadLogoAria}
                 onChange={handleLogoFileChange}
                 className="hidden"
@@ -232,7 +258,11 @@ export function ShopSettingsModal({
                 dir="ltr"
                 aria-label={t.settings.logoUrlAria}
                 value={isDataLogo ? '' : logoUrl}
-                onChange={(e) => setLogoUrl(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setLogoUrl(val);
+                  setLogoSizeBytes(getPreviewImageSizeBytes(val));
+                }}
                 placeholder={
                   isDataLogo
                     ? t.settings.logoUrlUploadedPlaceholder

@@ -12,7 +12,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
-import type { Product, Sale, StockMovement } from '../types/inventory';
+import type { AppUser, Product, Sale, StockMovement } from '../types/inventory';
 import {
   buildProductsBackupCsv,
   buildSalesBackupCsv,
@@ -29,6 +29,7 @@ import {
   type ReportPeriodType,
 } from '../utils/reports';
 import { formatSaleDateTime } from '../utils/sales';
+import { resolveRecordedByLabel } from '../utils/users';
 import { ReceiptModal } from './ReceiptModal';
 import { SaleDetailsModal } from './SaleDetailsModal';
 import { SalesPerDayChart } from './SalesPerDayChart';
@@ -37,6 +38,7 @@ interface ReportsViewProps {
   products: Product[];
   sales: Sale[];
   movements: StockMovement[];
+  users?: AppUser[];
   isLoading: boolean;
   loadError: string | null;
   shopName: string;
@@ -104,6 +106,7 @@ export function ReportsView({
   products,
   sales,
   movements,
+  users = [],
   isLoading,
   loadError,
   shopName,
@@ -861,6 +864,7 @@ export function ReportsView({
                       const itemsSummary = sale.items
                         .map((i) => `${i.quantity}× ${i.productName}`)
                         .join(', ');
+                      const recordedBy = resolveRecordedByLabel(sale, users);
                       return (
                         <button
                           key={sale.id}
@@ -876,6 +880,7 @@ export function ReportsView({
                               <span dir="ltr" className="ltr-isolate font-mono tabular-nums">
                                 {formatSaleDateTime(sale.createdAt, lang)}
                               </span>{' '}
+                              {recordedBy ? `· ${recordedBy} ` : ''}
                               · {itemsSummary}
                             </p>
                           </div>
@@ -963,6 +968,7 @@ export function ReportsView({
       {selectedSale && (
         <SaleDetailsModal
           sale={selectedSale}
+          users={users}
           currency={currency}
           onPrintReceipt={(sale) => setReceiptSale(sale)}
           onVoidSale={onVoidSale}
@@ -973,6 +979,7 @@ export function ReportsView({
       {receiptSale && (
         <ReceiptModal
           sale={receiptSale}
+          users={users}
           shopName={shopName}
           storeSubtitle={storeSubtitle}
           receiptFooter={receiptFooter}

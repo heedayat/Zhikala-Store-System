@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
 import type {
+  AppUser,
   CartLineItem,
   PaymentMethod,
   Product,
@@ -41,12 +42,14 @@ import {
   updateCartItemQuantity,
   updateCartItemUnitPrice,
 } from '../utils/sales';
+import { resolveRecordedByLabel } from '../utils/users';
 import { ReceiptModal } from './ReceiptModal';
 import { SaleDetailsModal } from './SaleDetailsModal';
 
 interface SellViewProps {
   products: Product[];
   sales: Sale[];
+  users?: AppUser[];
   isLoadingSales: boolean;
   loadError: string | null;
   shopName: string;
@@ -342,6 +345,7 @@ function getDateHeadingLabel(
 export function SellView({
   products,
   sales,
+  users = [],
   isLoadingSales,
   loadError,
   shopName,
@@ -1322,34 +1326,38 @@ export function SellView({
                 <p className="text-xs text-slate-500 py-2">{t.sell.noNotedSalesToday}</p>
               ) : (
                 <div className="max-h-32 overflow-y-auto divide-y divide-slate-200 border border-slate-200 rounded-lg bg-amber-50/40">
-                  {dailyRecon.notedSalesToday.map((sale) => (
-                    <button
-                      key={sale.id}
-                      type="button"
-                      onClick={() => setSelectedSaleId(sale.id)}
-                      className="w-full px-3 py-2 text-start hover:bg-amber-50 transition-colors flex items-start justify-between gap-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-slate-900 truncate">{sale.note}</p>
-                        <p className="text-[11px] text-slate-500 tabular-nums">
-                          <span dir="ltr" className="ltr-isolate font-mono">
-                            {formatSaleTime(sale.createdAt, lang)}
-                          </span>{' '}
-                          ·{' '}
-                          <span dir="ltr" className="ltr-isolate font-mono">
-                            {formatNumber(sale.itemCount)}
-                          </span>{' '}
-                          {sale.itemCount === 1 ? t.common.item : t.common.items}
-                        </p>
-                      </div>
-                      <span
-                        dir="ltr"
-                        className="ltr-isolate text-xs font-mono font-bold tabular-nums text-slate-950 shrink-0"
+                  {dailyRecon.notedSalesToday.map((sale) => {
+                    const recordedBy = resolveRecordedByLabel(sale, users);
+                    return (
+                      <button
+                        key={sale.id}
+                        type="button"
+                        onClick={() => setSelectedSaleId(sale.id)}
+                        className="w-full px-3 py-2 text-start hover:bg-amber-50 transition-colors flex items-start justify-between gap-3"
                       >
-                        {formatCurrencyLocalized(sale.totalAmount, currency)}
-                      </span>
-                    </button>
-                  ))}
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-900 truncate">{sale.note}</p>
+                          <p className="text-[11px] text-slate-500 tabular-nums truncate">
+                            <span dir="ltr" className="ltr-isolate font-mono">
+                              {formatSaleTime(sale.createdAt, lang)}
+                            </span>{' '}
+                            ·{' '}
+                            <span dir="ltr" className="ltr-isolate font-mono">
+                              {formatNumber(sale.itemCount)}
+                            </span>{' '}
+                            {sale.itemCount === 1 ? t.common.item : t.common.items}
+                            {recordedBy ? ` · ${recordedBy}` : ''}
+                          </p>
+                        </div>
+                        <span
+                          dir="ltr"
+                          className="ltr-isolate text-xs font-mono font-bold tabular-nums text-slate-950 shrink-0"
+                        >
+                          {formatCurrencyLocalized(sale.totalAmount, currency)}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1449,6 +1457,7 @@ export function SellView({
                         const extraLines = sale.items.length - 1;
                         const methodLabel = paymentLabel(sale.paymentMethod);
                         const isDigital = isDigitalPaymentMethod(sale.paymentMethod);
+                        const recordedBy = resolveRecordedByLabel(sale, users);
                         return (
                           <button
                             key={sale.id}
@@ -1488,6 +1497,11 @@ export function SellView({
                                   </span>{' '}
                                   {sale.itemCount === 1 ? t.common.item : t.common.items}
                                 </span>
+                                {recordedBy && (
+                                  <span dir="auto" className="text-[11px] text-slate-500 truncate max-w-[140px]">
+                                    · {recordedBy}
+                                  </span>
+                                )}
                                 {isVoided && (
                                   <span className="inline-flex items-center gap-1 font-semibold text-red-700">
                                     <Ban className="w-3 h-3" aria-hidden="true" />
@@ -1807,6 +1821,7 @@ export function SellView({
       {selectedSale && (
         <SaleDetailsModal
           sale={selectedSale}
+          users={users}
           currency={currency}
           hideCostDetails={hideCostDetails}
           onPrintReceipt={(sale) => {
@@ -1823,6 +1838,7 @@ export function SellView({
       {receiptSale && (
         <ReceiptModal
           sale={receiptSale}
+          users={users}
           shopName={shopName}
           storeSubtitle={storeSubtitle}
           receiptFooter={receiptFooter}

@@ -60,6 +60,8 @@ export interface TranslationDictionary {
     english: string;
     kurdish: string;
     closeDialogAria: string;
+    optimizedSizeBadge: string;
+    recordedByPrefix: string;
   };
   nav: {
     products: string;
@@ -555,6 +557,8 @@ export interface TranslationDictionary {
     inactive: string;
     deactivate: string;
     reactivate: string;
+    delete: string;
+    deleteAria: string;
     cannotChangeOwnRole: string;
     revokeAccessTitle: string;
     roleForAria: string;
@@ -570,14 +574,18 @@ export interface TranslationDictionary {
     footerNote: string;
     deactivateTitle: string;
     changeRoleTitle: string;
+    deleteTitle: string;
     deactivateDesc: string;
+    deleteDesc: string;
     demoteCashierDesc: string;
     demoteOwnerDesc: string;
     deactivateConfirm: string;
+    confirmDeleteBtn: string;
     changeRoleConfirm: string;
     updatedRoleNotice: string;
     reactivatedNotice: string;
     deactivatedNotice: string;
+    deletedNotice: string;
   };
   settings: {
     title: string;
@@ -653,9 +661,13 @@ export interface TranslationDictionary {
     lastActiveAdminRole: string;
     cannotDeactivateSelf: string;
     lastActiveManagerDeactivate: string;
+    cannotDeleteSelf: string;
+    lastAdminDelete: string;
+    lastActiveManagerDelete: string;
     onlyManagersSettings: string;
     onlyManagersAddUsers: string;
     onlyManagersUpdateUsers: string;
+    onlyManagersDeleteUsers: string;
   };
 }
 
@@ -687,6 +699,8 @@ export const EN_DICTIONARY: TranslationDictionary = {
     english: 'EN',
     kurdish: 'کوردی',
     closeDialogAria: 'Close confirmation dialog',
+    optimizedSizeBadge: 'Optimized: {kb} KB',
+    recordedByPrefix: 'Staff:',
   },
   nav: {
     products: 'Products',
@@ -853,7 +867,7 @@ export const EN_DICTIONARY: TranslationDictionary = {
     toggleCategoriesAria: 'Toggle category suggestions',
     useNewCategory: 'Use “{value}”',
     photos: 'Photos',
-    photosHint: 'Compressed ~800px JPEG · {count}/{max} photos',
+    photosHint: 'Auto WebP ≤400px (up to 15 MB) · {count}/{max} photos',
     compressingPhotos: 'Compressing and preparing photos...',
     dragDropPhotos: 'Drag and drop product photos here',
     selectMultipleHint: 'Select multiple files from your laptop at once',
@@ -1188,6 +1202,8 @@ export const EN_DICTIONARY: TranslationDictionary = {
     inactive: 'Inactive',
     deactivate: 'Deactivate',
     reactivate: 'Reactivate',
+    delete: 'Delete',
+    deleteAria: 'Delete {name}',
     cannotChangeOwnRole: 'You cannot change your own role.',
     revokeAccessTitle: 'Revoke store access for this user',
     roleForAria: 'Role for {email}',
@@ -1201,20 +1217,25 @@ export const EN_DICTIONARY: TranslationDictionary = {
     role: 'Role',
     adding: 'Adding...',
     footerNote:
-      'Admin and Owner accounts have full access to Products, Sell, Stock, Reports, CSV Backups, Store Settings, and Users. Cashiers only see Sell and a read-only Products view (without cost prices or stock values). Self-demotion and deactivating the last active Admin or Owner are blocked.',
+      'Admin and Owner accounts have full access to Products, Sell, Stock, Reports, CSV Backups, Store Settings, and Users. Cashiers only see Sell and a read-only Products view (without cost prices or stock values). Deleting yourself or the last remaining Admin, self-demotion, and deactivating the last active Admin or Owner are blocked. Historical sales and stock records stay intact after deletion.',
     deactivateTitle: 'Deactivate user account?',
     changeRoleTitle: 'Change role to {role}?',
+    deleteTitle: 'Delete User Permanently?',
     deactivateDesc:
       '{name} ({email}) will immediately lose access to the store and see an access denied screen.',
+    deleteDesc:
+      '{name} ({email}) will be permanently removed from the system and will immediately lose access. All historical sales, receipts, notes, and stock movements recorded by this user will stay intact.',
     demoteCashierDesc:
       '{name} ({email}) will become a Cashier and only have access to the Sell screen and a read-only Products list.',
     demoteOwnerDesc:
       '{name} ({email}) will change from Admin to Owner while keeping full store management access.',
     deactivateConfirm: 'Deactivate user',
+    confirmDeleteBtn: 'Confirm Delete',
     changeRoleConfirm: 'Change to {role}',
     updatedRoleNotice: '{name} updated to {role}.',
     reactivatedNotice: '{name} reactivated.',
     deactivatedNotice: '{name} deactivated.',
+    deletedNotice: 'User deleted permanently',
   },
   settings: {
     title: 'Store Settings & Backup',
@@ -1290,9 +1311,13 @@ export const EN_DICTIONARY: TranslationDictionary = {
     lastActiveAdminRole: 'At least one active Admin must remain.',
     cannotDeactivateSelf: 'You cannot deactivate your own account.',
     lastActiveManagerDeactivate: 'Cannot deactivate the last active Admin or Owner.',
+    cannotDeleteSelf: 'You cannot delete your own account.',
+    lastAdminDelete: 'Cannot delete the last remaining Admin.',
+    lastActiveManagerDelete: 'Cannot delete the last active Admin or Owner.',
     onlyManagersSettings: 'Only Admin or Owner accounts can update store settings.',
     onlyManagersAddUsers: 'Only Admin or Owner accounts can add users.',
     onlyManagersUpdateUsers: 'Only Admin or Owner accounts can modify user access.',
+    onlyManagersDeleteUsers: 'Only Admin or Owner accounts can delete users.',
   },
 };
 
@@ -1324,6 +1349,8 @@ export const KU_DICTIONARY: TranslationDictionary = {
     english: 'EN',
     kurdish: 'کوردی',
     closeDialogAria: 'داخستنی پەنجەرەی دڵنیابوونەوە',
+    optimizedSizeBadge: 'قەبارەی وێنە: {kb} کیلۆبایت',
+    recordedByPrefix: 'کارمەند:',
   },
   nav: {
     products: 'کاڵاکان',
@@ -1490,7 +1517,7 @@ export const KU_DICTIONARY: TranslationDictionary = {
     toggleCategoriesAria: 'پیشاندانی پێشنیاری پۆلەکان',
     useNewCategory: 'بەکارهێنانی «{value}»',
     photos: 'وێنەکان',
-    photosHint: 'وێنەی بچووککراوە ~800px JPEG · {count}/{max} وێنە',
+    photosHint: 'باشترکراو WebP ≤400px (تا 15 MB) · {count}/{max} وێنە',
     compressingPhotos: 'بچووککردنەوە و ئامادەکردنی وێنەکان...',
     dragDropPhotos: 'وێنەی کاڵا ڕاکێشە و لێرە دایبنێ',
     selectMultipleHint: 'دەتوانیت چەند وێنەیەک بەیەکەوە هەڵبژێریت',
@@ -1823,6 +1850,8 @@ export const KU_DICTIONARY: TranslationDictionary = {
     inactive: 'ناچالاک',
     deactivate: 'ناچالاککردن',
     reactivate: 'چالاککردنەوە',
+    delete: 'سڕینەوە',
+    deleteAria: 'سڕینەوەی {name}',
     cannotChangeOwnRole: 'ناتوانیت ڕۆڵی خۆت بگۆڕیت.',
     revokeAccessTitle: 'ڕاگرتنی مۆڵەتی ئەم بەکارهێنەرە',
     roleForAria: 'ڕۆڵ بۆ {email}',
@@ -1836,20 +1865,25 @@ export const KU_DICTIONARY: TranslationDictionary = {
     role: 'ڕۆڵ',
     adding: 'زیاد دەکرێت...',
     footerNote:
-      'بەڕێوەبەر و خاوەن دەسەڵاتی تەواویان هەیە بۆ کاڵاکان، فرۆشتن، کۆگا، ڕاپۆرتەکان، باکاپ، ڕێکخستنەکان و بەکارهێنەران. کاشێر تەنها بەشی فرۆشتن و لیستی کاڵاکان (بەبێ نرخی کڕین و بەهای کۆگا) دەبینێت. کەمکردنەوەی ڕۆڵی خۆت یان ناچالاککردنی دوا بەڕێوەبەر/خاوەنی چالاک ڕێگری لێ دەکرێت.',
+      'بەڕێوەبەر و خاوەن دەسەڵاتی تەواویان هەیە بۆ کاڵاکان، فرۆشتن، کۆگا، ڕاپۆرتەکان، باکاپ، ڕێکخستنەکان و بەکارهێنەران. کاشێر تەنها بەشی فرۆشتن و لیستی کاڵاکان (بەبێ نرخی کڕین و بەهای کۆگا) دەبینێت. سڕینەوەی خۆت یان دوا بەڕێوەبەر، کەمکردنەوەی ڕۆڵی خۆت و ناچالاککردنی دوا بەڕێوەبەر/خاوەن ڕێگری لێ دەکرێت. تۆمارەکانی پێشووی فرۆشتن و کۆگا دوای سڕینەوە بە پارێزراوی دەمێننەوە.',
     deactivateTitle: 'ئەم بەکارهێنەرە ناچالاک بکرێت؟',
     changeRoleTitle: 'گۆڕینی ڕۆڵ بۆ {role}؟',
+    deleteTitle: 'سڕینەوەی هەمیشەیی بەکارهێنەر؟',
     deactivateDesc:
       '{name} ({email}) دەستبەجێ مۆڵەتی چوونەژوورەوە لەدەست دەدات و پەیامی ڕێگەنەدان دەبینێت.',
+    deleteDesc:
+      'ئەمە بە شێوەیەکی هەمیشەیی {name} ({email}) لە سیستەمەکە دەسڕێتەوە و دەستبەجێ مۆڵەتی چوونەژوورەوەی ڕادەگرێت. هەموو تۆمارەکانی پێشووی فرۆشتن، وەسڵ، تێبینی و کۆگا بە تەواوی پارێزراو دەمێننەوە.',
     demoteCashierDesc:
       '{name} ({email}) دەبێتە کاشێر و تەنها دەستی بە شاشەی فرۆشتن و لیستی کاڵای خوێندنەوە دەگات.',
     demoteOwnerDesc:
       '{name} ({email}) لە بەڕێوەبەرەوە دەگۆڕدرێت بۆ خاوەن لەگەڵ هێشتنەوەی هەموو دەسەڵاتەکانی بەڕێوەبردن.',
     deactivateConfirm: 'ناچالاککردنی بەکارهێنەر',
+    confirmDeleteBtn: 'دڵنیابوونەوە لە سڕینەوە',
     changeRoleConfirm: 'گۆڕین بۆ {role}',
     updatedRoleNotice: '{name} گۆڕدرا بۆ {role}.',
     reactivatedNotice: '{name} چالاک کرایەوە.',
     deactivatedNotice: '{name} ناچالاک کرا.',
+    deletedNotice: 'بەکارهێنەر بە هەمیشەیی سڕایەوە',
   },
   settings: {
     title: 'ڕێکخستنەکانی فرۆشگا و باکاپ',
@@ -1925,9 +1959,13 @@ export const KU_DICTIONARY: TranslationDictionary = {
     lastActiveAdminRole: 'پێویستە لانیکەم یەک بەڕێوەبەری چالاک بمێنێتەوە.',
     cannotDeactivateSelf: 'ناتوانیت هەژماری خۆت ناچالاک بکەیت.',
     lastActiveManagerDeactivate: 'ناتوانرێت دوا بەڕێوەبەر یان خاوەنی چالاک ناچالاک بکرێت.',
+    cannotDeleteSelf: 'ناتوانیت هەژماری خۆت بسڕیتەوە.',
+    lastAdminDelete: 'ناتوانرێت دوا بەڕێوەبەری ماوە بسڕدرێتەوە.',
+    lastActiveManagerDelete: 'ناتوانرێت دوا بەڕێوەبەر یان خاوەنی چالاک بسڕدرێتەوە.',
     onlyManagersSettings: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن ڕێکخستنەکانی فرۆشگا بگۆڕن.',
     onlyManagersAddUsers: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن بەکارهێنەر زیاد بکەن.',
     onlyManagersUpdateUsers: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن مۆڵەتی بەکارهێنەر بگۆڕن.',
+    onlyManagersDeleteUsers: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن بەکارهێنەر بسڕنەوە.',
   },
 };
 
@@ -2016,4 +2054,17 @@ export function getMovementTypeLocalized(type: StockMovementType, lang: AppLangu
   if (type === 'void') return stockDict.typeVoid;
   if (type === 'add') return stockDict.typeAdded;
   return stockDict.typeRemoved;
+}
+
+const KURDISH_DIGITS = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'] as const;
+
+export function toKurdishDigits(value: string | number): string {
+  return String(value).replace(/\d/g, (d) => KURDISH_DIGITS[Number(d)] ?? d);
+}
+
+export function formatOptimizedSizeBadge(bytes: number, lang: AppLanguage): string {
+  const kb = Math.max(1, Math.round(bytes / 1024));
+  const template = getTranslations(lang).common.optimizedSizeBadge;
+  const formattedKb = lang === 'ku' ? toKurdishDigits(kb) : String(kb);
+  return interpolate(template, { kb: formattedKb });
 }

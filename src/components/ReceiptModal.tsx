@@ -1,14 +1,16 @@
 import { useEffect } from 'react';
 import { Printer, X } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
-import type { Sale } from '../types/inventory';
+import type { AppUser, Sale } from '../types/inventory';
 import { formatNumber } from '../utils/formatters';
 import { interpolate } from '../utils/i18n';
 import { formatSaleDateTime } from '../utils/sales';
+import { resolveRecordedByLabel } from '../utils/users';
 import { StoreLogo } from './StoreLogo';
 
 interface ReceiptModalProps {
   sale: Sale;
+  users?: AppUser[];
   shopName: string;
   storeSubtitle?: string;
   receiptFooter?: string;
@@ -19,6 +21,7 @@ interface ReceiptModalProps {
 
 export function ReceiptModal({
   sale,
+  users = [],
   shopName,
   storeSubtitle,
   receiptFooter,
@@ -32,6 +35,7 @@ export function ReceiptModal({
   const cleanFooter =
     receiptFooter?.trim() || interpolate(t.receipt.defaultFooter, { shopName });
   const resolvedPaymentLabel = paymentLabel(sale.paymentMethod);
+  const recordedBy = resolveRecordedByLabel(sale, users);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -136,6 +140,14 @@ export function ReceiptModal({
                 <span>{t.receipt.payment}</span>
                 <span className="font-medium text-slate-900">{resolvedPaymentLabel}</span>
               </div>
+              {recordedBy && (
+                <div className="flex items-center justify-between text-[11px] text-slate-600">
+                  <span>{t.common.recordedByPrefix}</span>
+                  <span dir="auto" data-testid="receipt-recorded-by" className="font-medium text-slate-900">
+                    {recordedBy}
+                  </span>
+                </div>
+              )}
             </div>
 
             <p

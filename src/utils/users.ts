@@ -39,6 +39,10 @@ export function isAuthorizedUserRecord(
   return user.active === true && isValidUserRole(user.role);
 }
 
+export function countAdmins(users: Pick<AppUser, 'role'>[]): number {
+  return users.filter((u) => u.role === 'admin').length;
+}
+
 export function countActiveAdmins(users: Pick<AppUser, 'active' | 'role'>[]): number {
   return users.filter((u) => u.active && u.role === 'admin').length;
 }
@@ -215,4 +219,76 @@ export function canToggleUserActive(
   }
 
   return { allowed: true };
+}
+
+export function canDeleteUser(
+  targetUser: Pick<AppUser, 'email' | 'role' | 'active'>,
+  currentUserEmail: string,
+  allUsers: Pick<AppUser, 'email' | 'role' | 'active'>[],
+  lang: AppLanguage = 'en'
+): GuardResult {
+  const v = getTranslations(lang).validation;
+  const normalizedTarget = normalizeEmail(targetUser.email);
+  const normalizedSelf = normalizeEmail(currentUserEmail);
+
+  if (normalizedTarget === normalizedSelf) {
+    return {
+      allowed: false,
+      reason: v.cannotDeleteSelf,
+    };
+  }
+
+  if (
+    targetUser.role === 'admin' &&
+    (countAdmins(allUsers) <= 1 || (targetUser.active && countActiveAdmins(allUsers) <= 1))
+  ) {
+    return {
+      allowed: false,
+      reason: v.lastAdminDelete,
+    };
+  }
+
+  if (
+    targetUser.active &&
+    isManagerRole(targetUser.role) &&
+    countActiveManagers(allUsers) <= 1
+  ) {
+    return {
+      allowed: false,
+      reason: v.lastActiveManagerDelete,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Resolves the staff display label for a sale or stock movement record.
+ * Falls back gracefully to the saved name/email snapshot stored on the record
+ * if the user has been permanently deleted from the `users` directory.
+ * Never returns "Unknown".
+ */
+export function resolveRecordedByLabel(
+  record: { recordedByName?: string; recordedByEmail?: string },
+  users: Pick<AppUser, 'email' | 'displayName'>[] = []
+): string | null {
+  const savedEmail = record.recordedByEmail ? normalizeEmail(record.recordedByEmail) : '';
+  const savedName = (record.recordedByName ?? '').trim();
+
+  if (savedEmail) {
+    const liveUser = users.find((u) => normalizeEmail(u.email) === savedEmail);
+    if (liveUser?.displayName?.trim()) {
+      return liveUser.displayName.trim();
+    }
+  }
+
+  if (savedName) {
+    return savedName;
+  }
+
+  if (savedEmail) {
+    return savedEmail;
+  }
+
+  return null;
 }

@@ -186,6 +186,8 @@ service cloud.firestore {
           'note',
           'costPrice',
           'saleId',
+          'recordedByName',
+          'recordedByEmail',
           'createdAt'
         ])
         && isValidId(data.ownerId)
@@ -202,6 +204,8 @@ service cloud.firestore {
         && isOptionalString(data, 'note', 500)
         && isOptionalNumber(data, 'costPrice', 0, 1000000000)
         && isOptionalId(data, 'saleId')
+        && isOptionalString(data, 'recordedByName', 80)
+        && isOptionalString(data, 'recordedByEmail', 254)
         && data.createdAt is timestamp;
     }
 
@@ -258,6 +262,8 @@ service cloud.firestore {
           'paymentMethod',
           'note',
           'status',
+          'recordedByName',
+          'recordedByEmail',
           'createdAt',
           'updatedAt',
           'voidedAt'
@@ -273,6 +279,8 @@ service cloud.firestore {
         && data.paymentMethod in ['cash', 'fib', 'card']
         && isOptionalString(data, 'note', 500)
         && data.status in ['completed', 'voided']
+        && isOptionalString(data, 'recordedByName', 80)
+        && isOptionalString(data, 'recordedByEmail', 254)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp
         && (!('voidedAt' in data) || data.voidedAt is timestamp);
@@ -355,7 +363,11 @@ service cloud.firestore {
           )
         );
 
-      allow delete: if false;
+      allow delete: if isManager()
+        && isValidEmailId(emailId)
+        && emailId != userEmail()
+        && emailId != 'gamerhidayatgamer@gmail.com'
+        && (existing().role != 'admin' || isBootstrapAdmin());
     }
 
     match /products/{productId} {

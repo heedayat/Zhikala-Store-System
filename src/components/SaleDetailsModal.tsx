@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, CheckCircle2, FileText, Printer, X } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
-import type { Sale } from '../types/inventory';
+import type { AppUser, Sale } from '../types/inventory';
 import { formatActionError, formatNumber } from '../utils/formatters';
 import { interpolate } from '../utils/i18n';
 import { formatSaleDateTime, isDigitalPaymentMethod } from '../utils/sales';
+import { resolveRecordedByLabel } from '../utils/users';
 
 interface SaleDetailsModalProps {
   sale: Sale;
+  users?: AppUser[];
   currency: string;
   hideCostDetails?: boolean;
   onPrintReceipt: (sale: Sale) => void;
@@ -17,6 +19,7 @@ interface SaleDetailsModalProps {
 
 export function SaleDetailsModal({
   sale,
+  users = [],
   currency,
   hideCostDetails = false,
   onPrintReceipt,
@@ -32,6 +35,7 @@ export function SaleDetailsModal({
   const shortRef = sale.id.slice(-8).toUpperCase();
   const resolvedPaymentLabel = paymentLabel(sale.paymentMethod);
   const isDigital = isDigitalPaymentMethod(sale.paymentMethod);
+  const recordedBy = resolveRecordedByLabel(sale, users);
   const itemsLabel = `${formatNumber(sale.itemCount)} ${
     sale.itemCount === 1 ? t.common.item : t.common.items
   }`;
@@ -110,6 +114,15 @@ export function SaleDetailsModal({
               <span dir="ltr" className="ltr-isolate">
                 {itemsLabel}
               </span>
+              {recordedBy && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span dir="auto" data-testid="sale-details-recorded-by">
+                    {t.common.recordedByPrefix}{' '}
+                    <span className="font-medium text-slate-700">{recordedBy}</span>
+                  </span>
+                </>
+              )}
               {isVoided && sale.voidedAt && (
                 <>
                   <span aria-hidden="true">·</span>

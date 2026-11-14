@@ -2,14 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { AppUser } from '../types/inventory';
 import {
+  canDeleteUser,
   canModifyUserRole,
   canToggleUserActive,
   countActiveAdmins,
   countActiveManagers,
+  countAdmins,
   isAuthorizedUserRecord,
   isBootstrapAdminEmail,
   isManagerRole,
   normalizeEmail,
+  resolveRecordedByLabel,
   validateNewUserForm,
 } from './users';
 
@@ -200,3 +203,112 @@ test('supports cashier role creation, manager role checks, and last Admin/Owner 
     true
   );
 });
+
+test('canDeleteUser enforces self-delete and last remaining Admin/Manager guardrails', () => {
+  const staff: AppUser[] = [
+    ...seedUsers,
+    {
+      email: 'cashier@littlewonders.shop',
+      displayName: 'Noor',
+      role: 'cashier',
+      active: true,
+    },
+  ];
+
+  // Cannot delete own account
+  const selfDel = canDeleteUser(staff[0], 'GAMERHIDAYATGAMER@gmail.com', staff);
+  assert.equal(selfDel.allowed, false);
+  assert.match(selfDel.reason ?? '', /own account/i);
+
+  // Cannot delete the last remaining Admin (even if another owner triggers it)
+  assert.equal(countAdmins(staff), 1);
+  const lastAdminDel = canDeleteUser(staff[0], 'shakarawat007@gmail.com', staff);
+  assert.equal(lastAdminDel.allowed, false);
+  assert.match(lastAdminDel.reason ?? '', /last remaining Admin/i);
+
+  // Can delete Owner or Cashier when active Admin remains
+  assert.equal(
+    canDeleteUser(staff[1], 'gamerhidayatgamer@gmail.com', staff).allowed,
+    true
+  );
+  assert.equal(
+    canDeleteUser(staff[3], 'gamerhidayatgamer@gmail.com', staff).allowed,
+    true
+  );
+
+  // When a second active Admin exists, deleting the second Admin is allowed
+  const twoAdmins: AppUser[] = [
+    ...staff,
+    {
+      email: 'admin2@littlewonders.shop',
+      displayName: 'Second Admin',
+      role: 'admin',
+      active: true,
+    },
+  ];
+  assert.equal(
+    canDeleteUser(twoAdmins[4], 'gamerhidayatgamer@gmail.com', twoAdmins).allowed,
+    true
+  );
+
+  // Cannot delete the sole remaining active Admin even if an inactive admin exists
+  const oneActiveOneInactiveAdmin: AppUser[] = [
+    { email: 'admin1@shop.com', displayName: 'Active Admin', role: 'admin', active: true },
+    { email: 'admin2@shop.com', displayName: 'Inactive Admin', role: 'admin', active: false },
+    { email: 'owner@shop.com', displayName: 'Owner', role: 'owner', active: true },
+  ];
+  assert.equal(
+    canDeleteUser(oneActiveOneInactiveAdmin[0], 'owner@shop.com', oneActiveOneInactiveAdmin)
+      .allowed,
+    false
+  );
+
+  // Cannot delete the sole active Owner/Manager
+  const soleOwner: AppUser[] = [
+    { email: 'owner@shop.com', displayName: 'Sole Owner', role: 'owner', active: true },
+    { email: 'cashier@shop.com', displayName: 'Cashier', role: 'cashier', active: true },
+  ];
+  assert.equal(
+    canDeleteUser(soleOwner[0], 'actor@shop.com', soleOwner).allowed,
+    false
+  );
+});
+
+test('resolveRecordedByLabel preserves historical staff attribution after permanent deletion and never returns Unknown', () => {
+  const activeUsers: AppUser[] = [
+    {
+      email: 'cashier@littlewonders.shop',
+      displayName: 'Noor Live',
+      role: 'cashier',
+      active: true,
+    },
+  ];
+
+  // Live user exists -> uses current displayName
+  assert.equal(
+    resolveRecordedByLabel(
+      { recordedByName: 'Noor', recordedByEmail: 'cashier@littlewonders.shop' },
+      activeUsers
+    ),
+    'Noor Live'
+  );
+
+  // User permanently deleted from directory -> falls back to saved snapshot name
+  assert.equal(
+    resolveRecordedByLabel(
+      { recordedByName: 'Noor', recordedByEmail: 'cashier@littlewonders.shop' },
+      []
+    ),
+    'Noor'
+  );
+
+  // User deleted and only email snapshot saved -> falls back to saved email
+  assert.equal(
+    resolveRecordedByLabel({ recordedByEmail: 'Noor@LittleWonders.shop' }, []),
+    'noor@littlewonders.shop'
+  );
+
+  // Legacy record with no attribution -> returns null (never "Unknown")
+  assert.equal(resolveRecordedByLabel({}, activeUsers), null);
+});
+

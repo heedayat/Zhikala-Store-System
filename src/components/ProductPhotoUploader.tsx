@@ -1,8 +1,8 @@
 import { useId, useRef, useState } from 'react';
 import { Image as ImageIcon, Loader2, Star, Trash2, Upload } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
-import { compressProductImage } from '../utils/imageCompression';
-import { interpolate } from '../utils/i18n';
+import { compressProductImage, getPreviewImageSizeBytes } from '../utils/imageCompression';
+import { formatOptimizedSizeBadge, interpolate } from '../utils/i18n';
 import {
   MAX_INLINE_PHOTOS,
   tryUploadProductPhotoToStorage,
@@ -25,7 +25,7 @@ export function ProductPhotoUploader({
   isPreviewMode,
   onBusyChange,
 }: ProductPhotoUploaderProps) {
-  const { t } = useTranslation();
+  const { lang, t } = useTranslation();
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -33,6 +33,7 @@ export function ProductPhotoUploader({
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [usingInlineFallback, setUsingInlineFallback] = useState(isPreviewMode);
   const [brokenIndices, setBrokenIndices] = useState<Record<number, boolean>>({});
+  const [compressedSizesByUrl, setCompressedSizesByUrl] = useState<Record<string, number>>({});
 
   const maxAllowed = usingInlineFallback ? MAX_INLINE_PHOTOS : 8;
 
@@ -54,6 +55,7 @@ export function ProductPhotoUploader({
     onBusyChange?.(true);
 
     const addedUrls: string[] = [];
+    const addedSizes: Record<string, number> = {};
     let fellBackToInline = usingInlineFallback;
     const errors: string[] = [];
 
@@ -69,6 +71,7 @@ export function ProductPhotoUploader({
               compressed.blob
             );
             addedUrls.push(uploaded.url);
+            addedSizes[uploaded.url] = compressed.byteLength;
             continue;
           } catch {
             fellBackToInline = true;
@@ -76,18 +79,20 @@ export function ProductPhotoUploader({
           }
         }
 
-        // Enforce 4-photo limit when storing compressed JPEG versions inline
+        // Enforce 4-photo limit when storing compressed WebP/JPEG versions inline
         if (photos.length + addedUrls.length >= MAX_INLINE_PHOTOS) {
           errors.push(interpolate(t.productForm.inlineLimitError, { max: MAX_INLINE_PHOTOS }));
           break;
         }
         addedUrls.push(compressed.dataUrl);
+        addedSizes[compressed.dataUrl] = compressed.byteLength;
       } catch (err) {
         errors.push(err instanceof Error ? err.message : `Failed to process "${file.name}".`);
       }
     }
 
     if (addedUrls.length > 0) {
+      setCompressedSizesByUrl((prev) => ({ ...prev, ...addedSizes }));
       onChange([...photos, ...addedUrls].slice(0, fellBackToInline ? MAX_INLINE_PHOTOS : 8));
     }
 
@@ -157,7 +162,7 @@ export function ProductPhotoUploader({
           ref={fileInputRef}
           id={inputId}
           type="file"
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           multiple
           className="sr-only"
           onChange={(e) => void processFiles(e.target.files)}
@@ -191,64 +196,75 @@ export function ProductPhotoUploader({
         </div>
 
         {photos.length > 0 && (
-          <div className="mt-4 grid grid-cols-4 gap-3">
-            {photos.map((src, idx) => (
-              <div
-                key={`${idx}-${src.slice(0, 32)}`}
-                className="group relative aspect-square rounded-lg border border-slate-200 bg-white overflow-hidden"
-              >
-                {brokenIndices[idx] ? (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-400 p-2 text-center">
-                    <ImageIcon className="w-5 h-5 mb-1" aria-hidden="true" />
-                    <span className="text-[11px]">
-                      {interpolate(t.productForm.photoFallbackLabel, { index: idx + 1 })}
-                    </span>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {photos.map((src, idx) => {
+              const sizeBytes = compressedSizesByUrl[src] ?? getPreviewImageSizeBytes(src);
+              return (
+                <div key={`${idx}-${src.slice(0, 32)}`} className="flex flex-col gap-1.5 min-w-0">
+                  <div className="group relative aspect-square rounded-lg border border-slate-200 bg-white overflow-hidden">
+                    {brokenIndices[idx] ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-400 p-2 text-center">
+                        <ImageIcon className="w-5 h-5 mb-1" aria-hidden="true" />
+                        <span className="text-[11px]">
+                          {interpolate(t.productForm.photoFallbackLabel, { index: idx + 1 })}
+                        </span>
+                      </div>
+                    ) : (
+                      <img
+                        src={src}
+                        alt={interpolate(t.productForm.photoAlt, { index: idx + 1 })}
+                        referrerPolicy="no-referrer"
+                        onError={() =>
+                          setBrokenIndices((prev) => ({
+                            ...prev,
+                            [idx]: true,
+                          }))
+                        }
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+
+                    {idx === 0 && (
+                      <span className="absolute start-1.5 top-1.5 px-1.5 py-0.5 rounded bg-slate-900/85 text-[10px] font-semibold text-white">
+                        {t.productForm.mainBadge}
+                      </span>
+                    )}
+
+                    <div className="absolute end-1.5 top-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      {idx > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetCover(idx)}
+                          title={t.productForm.makeMainPhoto}
+                          aria-label={interpolate(t.productForm.setMainAria, { index: idx + 1 })}
+                          className="w-7 h-7 rounded-md bg-white/95 border border-slate-200 text-slate-700 hover:text-amber-600 flex items-center justify-center shadow-xs"
+                        >
+                          <Star className="w-3.5 h-3.5" aria-hidden="true" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemove(idx)}
+                        title={t.productForm.removePhoto}
+                        aria-label={interpolate(t.productForm.removePhotoAria, { index: idx + 1 })}
+                        className="w-7 h-7 rounded-md bg-white/95 border border-slate-200 text-slate-700 hover:text-red-600 flex items-center justify-center shadow-xs"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
-                ) : (
-                  <img
-                    src={src}
-                    alt={interpolate(t.productForm.photoAlt, { index: idx + 1 })}
-                    referrerPolicy="no-referrer"
-                    onError={() =>
-                      setBrokenIndices((prev) => ({
-                        ...prev,
-                        [idx]: true,
-                      }))
-                    }
-                    className="w-full h-full object-cover"
-                  />
-                )}
 
-                {idx === 0 && (
-                  <span className="absolute start-1.5 top-1.5 px-1.5 py-0.5 rounded bg-slate-900/85 text-[10px] font-semibold text-white">
-                    {t.productForm.mainBadge}
-                  </span>
-                )}
-
-                <div className="absolute end-1.5 top-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                  {idx > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => handleSetCover(idx)}
-                      title={t.productForm.makeMainPhoto}
-                      aria-label={interpolate(t.productForm.setMainAria, { index: idx + 1 })}
-                      className="w-7 h-7 rounded-md bg-white/95 border border-slate-200 text-slate-700 hover:text-amber-600 flex items-center justify-center shadow-xs"
+                  {sizeBytes !== null && (
+                    <span
+                      data-testid="product-photo-size-badge"
+                      className="inline-flex items-center justify-center px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[10px] font-medium text-slate-600 truncate"
                     >
-                      <Star className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
+                      {formatOptimizedSizeBadge(sizeBytes, lang)}
+                    </span>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(idx)}
-                    title={t.productForm.removePhoto}
-                    aria-label={interpolate(t.productForm.removePhotoAria, { index: idx + 1 })}
-                    className="w-7 h-7 rounded-md bg-white/95 border border-slate-200 text-slate-700 hover:text-red-600 flex items-center justify-center shadow-xs"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

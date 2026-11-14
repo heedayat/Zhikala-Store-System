@@ -17,7 +17,12 @@ import { validateProductForm } from './productValidation.ts';
 import { buildPeriodReport, getWeekStartDayName } from './reports.ts';
 import { formatSaleDateTime, formatSaleTime } from './sales.ts';
 import { formatMovementDateTime, validateStockAdjustment } from './stockMovements.ts';
-import { canModifyUserRole, canToggleUserActive, validateNewUserForm } from './users.ts';
+import {
+  canDeleteUser,
+  canModifyUserRole,
+  canToggleUserActive,
+  validateNewUserForm,
+} from './users.ts';
 
 function collectStringLeaves(obj: Record<string, unknown>, prefix = ''): string[] {
   const keys: string[] = [];
@@ -80,6 +85,19 @@ describe('i18n dictionary completeness and retail terminology', () => {
     assert.equal(ku.receipt.printReceipt, 'چاپکردنی وەسڵ');
     assert.equal(ku.reports.grossProfit, 'قازانجی گشتی');
     assert.equal(ku.reports.totalDiscountGiven, 'داشکاندن');
+
+    const en = getTranslations('en');
+    assert.equal(en.users.delete, 'Delete');
+    assert.equal(en.users.confirmDeleteBtn, 'Confirm Delete');
+    assert.equal(en.common.cancel, 'Cancel');
+    assert.equal(en.users.deletedNotice, 'User deleted permanently');
+    assert.equal(en.users.deleteTitle, 'Delete User Permanently?');
+
+    assert.equal(ku.users.delete, 'سڕینەوە');
+    assert.equal(ku.users.confirmDeleteBtn, 'دڵنیابوونەوە لە سڕینەوە');
+    assert.equal(ku.common.cancel, 'پاشگەزبوونەوە');
+    assert.equal(ku.users.deletedNotice, 'بەکارهێنەر بە هەمیشەیی سڕایەوە');
+    assert.equal(ku.users.deleteTitle, 'سڕینەوەی هەمیشەیی بەکارهێنەر؟');
   });
 
   it('normalizes language codes, interpolates placeholders, and formats localized currency', () => {
@@ -187,5 +205,14 @@ describe('i18n dictionary completeness and retail terminology', () => {
     );
     assert.equal(activeGuard.allowed, false);
     assert.equal(activeGuard.reason, KU_DICTIONARY.validation.cannotDeactivateSelf);
+
+    const deleteGuard = canDeleteUser(
+      { email: 'admin@shop.com', role: 'admin', active: true },
+      'admin@shop.com',
+      [{ email: 'admin@shop.com', role: 'admin', active: true }],
+      'ku'
+    );
+    assert.equal(deleteGuard.allowed, false);
+    assert.equal(deleteGuard.reason, KU_DICTIONARY.validation.cannotDeleteSelf);
   });
 });

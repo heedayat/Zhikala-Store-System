@@ -82,6 +82,8 @@ export interface StockMovement {
   note?: string;
   costPrice?: number | null;
   saleId?: string;
+  recordedByName?: string;
+  recordedByEmail?: string;
   createdAt: Date;
 }
 
@@ -121,6 +123,8 @@ export interface Sale {
   paymentMethod: PaymentMethod;
   note?: string;
   status: SaleStatus;
+  recordedByName?: string;
+  recordedByEmail?: string;
   createdAt: Date;
   updatedAt?: Date | null;
   voidedAt?: Date | null;

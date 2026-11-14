@@ -164,6 +164,16 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "recordedByName": {
+          "type": "string",
+          "description": "Saved display name snapshot of the user who recorded the movement.",
+          "maxLength": 80
+        },
+        "recordedByEmail": {
+          "type": "string",
+          "description": "Saved email snapshot of the user who recorded the movement.",
+          "maxLength": 254
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -222,6 +232,16 @@
           "type": "string",
           "enum": ["completed", "voided"],
           "description": "Sale lifecycle state; voided sales restore stock and remain archived."
+        },
+        "recordedByName": {
+          "type": "string",
+          "description": "Saved display name snapshot of the staff user who recorded the sale.",
+          "maxLength": 80
+        },
+        "recordedByEmail": {
+          "type": "string",
+          "description": "Saved email snapshot of the staff user who recorded the sale.",
+          "maxLength": 254
         },
         "createdAt": {
           "type": "string",
