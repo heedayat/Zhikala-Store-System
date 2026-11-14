@@ -6,11 +6,14 @@ export type SupportedCurrency = 'IQD' | 'USD';
 
 export type PaymentMethod = 'cash' | 'fib' | 'card';
 
+export type NetworkSyncStatus = 'online' | 'offline' | 'syncing';
+
 export interface AppUser {
   email: string; // normalized lowercase email (Firestore doc ID)
   displayName: string;
   role: UserRole;
   active: boolean;
+  pin?: string;
   createdAt?: Date | null;
   updatedAt?: Date | null;
 }

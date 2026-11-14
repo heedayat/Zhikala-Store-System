@@ -76,6 +76,31 @@ export interface TranslationDictionary {
     mainNavigation: string;
     mobileNavigation: string;
     storeSettingsAndBackup: string;
+    lockCounter: string;
+    lockCounterTooltip: string;
+    unlockAdmin: string;
+    unlockAdminTooltip: string;
+    counterLockedBanner: string;
+    statusOnline: string;
+    statusOffline: string;
+    statusOfflineSyncing: string;
+    statusSyncing: string;
+    offlineSavedNote: string;
+  };
+  pinLock: {
+    enterPinTitle: string;
+    enterPinSubtitle: string;
+    signedInAs: string;
+    unlockTitle: string;
+    unlockSubtitle: string;
+    incorrectPin: string;
+    defaultPinHint: string;
+    unlockBtn: string;
+    switchAccount: string;
+    clear: string;
+    backspace: string;
+    keypadAria: string;
+    pinDigitsAria: string;
   };
   roles: {
     admin: string;
@@ -586,6 +611,16 @@ export interface TranslationDictionary {
     reactivatedNotice: string;
     deactivatedNotice: string;
     deletedNotice: string;
+    colPin: string;
+    pinSetLabel: string;
+    setPinBtn: string;
+    setPinTitle: string;
+    setPinDesc: string;
+    pinLabel: string;
+    pinPlaceholder: string;
+    pinHint: string;
+    pinUpdatedNotice: string;
+    savePinBtn: string;
   };
   settings: {
     title: string;
@@ -620,6 +655,11 @@ export interface TranslationDictionary {
     errorImageType: string;
     errorLogoProcess: string;
     errorSaveFailed: string;
+    securityPinTitle: string;
+    securityPinLabel: string;
+    securityPinHint: string;
+    securityPinPlaceholder: string;
+    errorPinInvalid: string;
   };
   validation: {
     productNameRequired: string;
@@ -668,6 +708,7 @@ export interface TranslationDictionary {
     onlyManagersAddUsers: string;
     onlyManagersUpdateUsers: string;
     onlyManagersDeleteUsers: string;
+    pinInvalid: string;
   };
 }
 
@@ -715,6 +756,31 @@ export const EN_DICTIONARY: TranslationDictionary = {
     mainNavigation: 'Main navigation',
     mobileNavigation: 'Mobile navigation',
     storeSettingsAndBackup: 'Store settings & backup',
+    lockCounter: 'Lock Counter',
+    lockCounterTooltip: 'Lock Counter / Cashier Mode (Sell screen only)',
+    unlockAdmin: 'Unlock Admin',
+    unlockAdminTooltip: 'Enter Admin/Owner PIN to unlock full workspace',
+    counterLockedBanner: 'Cashier Lock Active — Sell mode only. Enter Admin/Owner PIN to unlock.',
+    statusOnline: 'Online',
+    statusOffline: 'Offline',
+    statusOfflineSyncing: 'Offline (Syncing)',
+    statusSyncing: 'Syncing...',
+    offlineSavedNote: 'Offline — sale saved locally and queued to sync automatically.',
+  },
+  pinLock: {
+    enterPinTitle: 'Enter 4-Digit Security PIN',
+    enterPinSubtitle: 'Enter your personal PIN to unlock the store workspace.',
+    signedInAs: 'Signed in as',
+    unlockTitle: 'Unlock Admin / Owner Access',
+    unlockSubtitle: 'Enter the 4-digit Admin or Owner PIN to exit Cashier Lock mode.',
+    incorrectPin: 'Incorrect PIN. Please try again.',
+    defaultPinHint: 'Default Admin/Owner PIN is 1234 until changed in Settings or Users.',
+    unlockBtn: 'Unlock',
+    switchAccount: 'Sign out and switch account',
+    clear: 'Clear',
+    backspace: 'Delete digit',
+    keypadAria: '4-digit security PIN keypad',
+    pinDigitsAria: 'Entered PIN digits: {count} of 4',
   },
   roles: {
     admin: 'Admin',
@@ -1236,6 +1302,16 @@ export const EN_DICTIONARY: TranslationDictionary = {
     reactivatedNotice: '{name} reactivated.',
     deactivatedNotice: '{name} deactivated.',
     deletedNotice: 'User deleted permanently',
+    colPin: 'Security PIN',
+    pinSetLabel: 'PIN set',
+    setPinBtn: 'Set PIN',
+    setPinTitle: 'Set 4-Digit Security PIN',
+    setPinDesc: 'Update the 4-digit security PIN for {name} ({email}).',
+    pinLabel: '4-Digit Security PIN',
+    pinPlaceholder: '1234',
+    pinHint: '4 numeric digits (defaults to 1234 if left blank).',
+    pinUpdatedNotice: 'Security PIN updated for {name}.',
+    savePinBtn: 'Save PIN',
   },
   settings: {
     title: 'Store Settings & Backup',
@@ -1270,6 +1346,11 @@ export const EN_DICTIONARY: TranslationDictionary = {
     errorImageType: 'Please select a PNG or image file for the store logo.',
     errorLogoProcess: 'Could not process logo image.',
     errorSaveFailed: 'Failed to save store settings.',
+    securityPinTitle: 'Counter Security PIN',
+    securityPinLabel: 'Your 4-digit PIN (Admin / Owner)',
+    securityPinHint: 'Required on startup/refresh and to unlock from Cashier Mode (default: 1234).',
+    securityPinPlaceholder: '4 digits (e.g. 1234)',
+    errorPinInvalid: 'Security PIN must be exactly 4 numeric digits.',
   },
   validation: {
     productNameRequired: 'Product name is required.',
@@ -1318,6 +1399,7 @@ export const EN_DICTIONARY: TranslationDictionary = {
     onlyManagersAddUsers: 'Only Admin or Owner accounts can add users.',
     onlyManagersUpdateUsers: 'Only Admin or Owner accounts can modify user access.',
     onlyManagersDeleteUsers: 'Only Admin or Owner accounts can delete users.',
+    pinInvalid: 'PIN must be exactly 4 numeric digits (e.g. 1234).',
   },
 };
 
@@ -1365,6 +1447,31 @@ export const KU_DICTIONARY: TranslationDictionary = {
     mainNavigation: 'پێڕستی سەرەکی',
     mobileNavigation: 'پێڕستی مۆبایل',
     storeSettingsAndBackup: 'ڕێکخستنەکانی فرۆشگا و باکاپ',
+    lockCounter: 'قفڵکردنی کاشێر',
+    lockCounterTooltip: 'قفڵکردنی کاشێر / دۆخی فرۆشتن (تەنها شاشەی فرۆشتن)',
+    unlockAdmin: 'کردنەوەی بەڕێوەبەر',
+    unlockAdminTooltip: 'کۆدی ٤ ژمارەیی بەڕێوەبەر بنووسە بۆ کردنەوەی هەموو بەشەکان',
+    counterLockedBanner: 'دۆخی قفڵی کاشێر چالاکە — تەنها فرۆشتن. بۆ کردنەوە کۆدی بەڕێوەبەر بنووسە.',
+    statusOnline: 'سەرهێڵ',
+    statusOffline: 'بێ هێڵ',
+    statusOfflineSyncing: 'بێ هێڵ (هاوکات دەکرێتەوە)',
+    statusSyncing: 'هاوکات دەکرێت...',
+    offlineSavedNote: 'بێ هێڵ — فرۆشتن لەسەر ئامێرەکە پاشەکەوت کرا و دوای هاتنەوەی هێڵ دەنێردرێت.',
+  },
+  pinLock: {
+    enterPinTitle: 'کۆدی ٤ ژمارەیی ئاسایش بنووسە',
+    enterPinSubtitle: 'بۆ چوونەناو سیستەمەکە کۆدە تایبەتەکەت بنووسە.',
+    signedInAs: 'چوویتەتە ژوورەوە وەک',
+    unlockTitle: 'کردنەوەی دەسەڵاتی بەڕێوەبەر / خاوەن',
+    unlockSubtitle: 'کۆدی ٤ ژمارەیی بەڕێوەبەر یان خاوەن بنووسە بۆ دەرچوون لە دۆخی قفڵی کاشێر.',
+    incorrectPin: 'کۆدەکە هەڵەیە. تکایە دووبارە هەوڵبدەرەوە.',
+    defaultPinHint: 'کۆدی بنەڕەتی بەڕێوەبەر/خاوەن ١٢٣٤ـە تا لە ڕێکخستنەکان دەگۆڕدرێت.',
+    unlockBtn: 'کردنەوە',
+    switchAccount: 'چوونەدەرەوە و گۆڕینی هەژمار',
+    clear: 'سڕینەوە',
+    backspace: 'لابردنی ژمارە',
+    keypadAria: 'کیپادی کۆدی ٤ ژمارەیی',
+    pinDigitsAria: 'ژمارە نووسراوەکان: {count} لە ٤',
   },
   roles: {
     admin: 'بەڕێوەبەر',
@@ -1884,6 +1991,16 @@ export const KU_DICTIONARY: TranslationDictionary = {
     reactivatedNotice: '{name} چالاک کرایەوە.',
     deactivatedNotice: '{name} ناچالاک کرا.',
     deletedNotice: 'بەکارهێنەر بە هەمیشەیی سڕایەوە',
+    colPin: 'کۆدی PIN',
+    pinSetLabel: 'PIN دانراوە',
+    setPinBtn: 'گۆڕینی PIN',
+    setPinTitle: 'دانانی کۆدی ٤ ژمارەیی (PIN)',
+    setPinDesc: 'نوێکردنەوەی کۆدی ٤ ژمارەیی بۆ {name} ({email}).',
+    pinLabel: 'کۆدی ٤ ژمارەیی (PIN)',
+    pinPlaceholder: '1234',
+    pinHint: '٤ ژمارە بنووسە (بە بەتاڵی بهێڵرێتەوە دەبێتە 1234).',
+    pinUpdatedNotice: 'کۆدی PIN بۆ {name} نوێ کرایەوە.',
+    savePinBtn: 'پاشەکەوتکردنی PIN',
   },
   settings: {
     title: 'ڕێکخستنەکانی فرۆشگا و باکاپ',
@@ -1918,6 +2035,11 @@ export const KU_DICTIONARY: TranslationDictionary = {
     errorImageType: 'تکایە فایلی وێنەی PNG یان وێنەی تر هەڵبژێرە بۆ لۆگۆ.',
     errorLogoProcess: 'نەتوانرا وێنەی لۆگۆ ئامادە بکرێت.',
     errorSaveFailed: 'نەتوانرا ڕێکخستنەکان پاشەکەوت بکرێن.',
+    securityPinTitle: 'کۆدی ئاسایشی کاشێر (PIN)',
+    securityPinLabel: 'کۆدی ٤ ژمارەیی تۆ (بەڕێوەبەر / خاوەن)',
+    securityPinHint: 'لە سەرەتای کردنەوە و بۆ کردنەوەی دۆخی کاشێر داوا دەکرێت (بنەڕەتی: 1234).',
+    securityPinPlaceholder: '٤ ژمارە (بۆ نموونە: 1234)',
+    errorPinInvalid: 'کۆدی ئاسایش دەبێت بەتەواوی ٤ ژمارە بێت.',
   },
   validation: {
     productNameRequired: 'ناوی کاڵا پێویستە.',
@@ -1966,6 +2088,7 @@ export const KU_DICTIONARY: TranslationDictionary = {
     onlyManagersAddUsers: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن بەکارهێنەر زیاد بکەن.',
     onlyManagersUpdateUsers: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن مۆڵەتی بەکارهێنەر بگۆڕن.',
     onlyManagersDeleteUsers: 'تەنها بەڕێوەبەر یان خاوەن دەتوانن بەکارهێنەر بسڕنەوە.',
+    pinInvalid: 'کۆدی PIN دەبێت بەتەواوی ٤ ژمارە بێت (بۆ نموونە: 1234).',
   },
 };
 

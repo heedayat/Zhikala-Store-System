@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
-import { Download, Trash2, Upload, X } from 'lucide-react';
+import { Download, KeyRound, Trash2, Upload, X } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
 import type {
   Product,
@@ -21,6 +21,7 @@ import {
   getPreviewImageSizeBytes,
   validateRawImageFile,
 } from '../utils/imageCompression';
+import { DEFAULT_SECURITY_PIN, isValidPin, normalizePinInput } from '../utils/pin';
 import { normalizeWeekStartDay } from '../utils/reports';
 import { LanguageToggle } from './LanguageToggle';
 import { StoreLogo } from './StoreLogo';
@@ -32,6 +33,7 @@ export interface StoreSettingsFormValues {
   logoUrl: string;
   currency: SupportedCurrency;
   weekStartDay: number;
+  securityPin?: string;
 }
 
 interface ShopSettingsModalProps {
@@ -41,6 +43,7 @@ interface ShopSettingsModalProps {
   initialLogoUrl: string;
   initialCurrency: SupportedCurrency;
   initialWeekStartDay: number;
+  initialSecurityPin?: string;
   products: Product[];
   sales: Sale[];
   movements: StockMovement[];
@@ -55,6 +58,7 @@ export function ShopSettingsModal({
   initialLogoUrl,
   initialCurrency,
   initialWeekStartDay,
+  initialSecurityPin,
   products,
   sales,
   movements,
@@ -75,6 +79,9 @@ export function ShopSettingsModal({
     initialCurrency === 'USD' ? 'USD' : 'IQD'
   );
   const [weekStartDay, setWeekStartDay] = useState(normalizeWeekStartDay(initialWeekStartDay));
+  const [securityPin, setSecurityPin] = useState(
+    isValidPin(initialSecurityPin) ? initialSecurityPin : DEFAULT_SECURITY_PIN
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,6 +135,11 @@ export function ShopSettingsModal({
       return;
     }
 
+    if (!isValidPin(securityPin)) {
+      setError(t.settings.errorPinInvalid);
+      return;
+    }
+
     setIsSaving(true);
     setError(null);
     try {
@@ -138,6 +150,7 @@ export function ShopSettingsModal({
         logoUrl: cleanLogoUrl,
         currency,
         weekStartDay,
+        securityPin,
       });
       onClose();
     } catch (err) {
@@ -354,6 +367,31 @@ export function ShopSettingsModal({
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          {/* Counter Security PIN */}
+          <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-3.5 h-3.5 text-slate-600 shrink-0" aria-hidden="true" />
+              <p className="text-xs font-semibold text-slate-800">{t.settings.securityPinTitle}</p>
+            </div>
+            <div>
+              <label htmlFor="settings-security-pin" className="block text-xs font-medium text-slate-700 mb-1">
+                {t.settings.securityPinLabel}
+              </label>
+              <input
+                id="settings-security-pin"
+                type="text"
+                inputMode="numeric"
+                dir="ltr"
+                maxLength={4}
+                value={securityPin}
+                onChange={(e) => setSecurityPin(normalizePinInput(e.target.value))}
+                placeholder={t.settings.securityPinPlaceholder}
+                className="ltr-isolate w-full sm:w-48 min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white text-sm font-mono font-bold tabular-nums tracking-[0.35em] text-slate-950 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">{t.settings.securityPinHint}</p>
             </div>
           </div>
 

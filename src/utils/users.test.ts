@@ -312,3 +312,41 @@ test('resolveRecordedByLabel preserves historical staff attribution after perman
   assert.equal(resolveRecordedByLabel({}, activeUsers), null);
 });
 
+test('validateNewUserForm validates optional 4-digit PIN and defaults blank PIN to 1234', () => {
+  const withDefaultPin = validateNewUserForm(
+    { email: 'cashier2@shop.com', displayName: 'Cashier 2', role: 'cashier', pin: '' },
+    seedUsers
+  );
+  assert.equal(withDefaultPin.valid, true);
+  if (withDefaultPin.valid) {
+    assert.equal(withDefaultPin.data.pin, '1234');
+  }
+
+  const withCustomPin = validateNewUserForm(
+    { email: 'cashier3@shop.com', displayName: 'Cashier 3', role: 'cashier', pin: '4829' },
+    seedUsers
+  );
+  assert.equal(withCustomPin.valid, true);
+  if (withCustomPin.valid) {
+    assert.equal(withCustomPin.data.pin, '4829');
+  }
+
+  const badShortPin = validateNewUserForm(
+    { email: 'cashier4@shop.com', displayName: 'Cashier 4', role: 'cashier', pin: '12' },
+    seedUsers
+  );
+  assert.equal(badShortPin.valid, false);
+  if (!badShortPin.valid) {
+    assert.ok(badShortPin.errors.pin);
+  }
+
+  const badAlphaPin = validateNewUserForm(
+    { email: 'cashier5@shop.com', displayName: 'Cashier 5', role: 'cashier', pin: 'abcd' },
+    seedUsers
+  );
+  assert.equal(badAlphaPin.valid, false);
+  if (!badAlphaPin.valid) {
+    assert.ok(badAlphaPin.errors.pin);
+  }
+});
+

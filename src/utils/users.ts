@@ -1,5 +1,6 @@
 import type { AppUser, UserRole } from '../types/inventory';
 import { getTranslations, type AppLanguage } from './i18n';
+import { DEFAULT_SECURITY_PIN, isValidPin } from './pin';
 
 export const BOOTSTRAP_ADMIN_EMAIL = 'gamerhidayatgamer@gmail.com';
 export const INITIAL_OWNER_EMAIL = 'shakarawat007@gmail.com';
@@ -55,6 +56,7 @@ export interface NewUserValidationErrors {
   email?: string;
   displayName?: string;
   role?: string;
+  pin?: string;
 }
 
 export type NewUserValidationResult =
@@ -64,6 +66,7 @@ export type NewUserValidationResult =
         email: string;
         displayName: string;
         role: UserRole;
+        pin: string;
       };
     }
   | {
@@ -72,7 +75,7 @@ export type NewUserValidationResult =
     };
 
 export function validateNewUserForm(
-  input: { email: string; displayName: string; role: string },
+  input: { email: string; displayName: string; role: string; pin?: string },
   existingUsers: Pick<AppUser, 'email'>[],
   lang: AppLanguage = 'en'
 ): NewUserValidationResult {
@@ -81,6 +84,8 @@ export function validateNewUserForm(
   const email = normalizeEmail(input.email);
   const displayName = input.displayName.trim();
   const role = input.role;
+  const rawPin = (input.pin ?? '').trim();
+  const resolvedPin = rawPin === '' ? DEFAULT_SECURITY_PIN : rawPin;
 
   if (!email) {
     errors.email = v.emailRequired;
@@ -100,6 +105,10 @@ export function validateNewUserForm(
     errors.role = v.userRoleInvalid;
   }
 
+  if (rawPin !== '' && !isValidPin(rawPin)) {
+    errors.pin = v.pinInvalid;
+  }
+
   if (Object.keys(errors).length > 0) {
     return { valid: false, errors };
   }
@@ -110,6 +119,7 @@ export function validateNewUserForm(
       email,
       displayName,
       role: role as UserRole,
+      pin: resolvedPin,
     },
   };
 }

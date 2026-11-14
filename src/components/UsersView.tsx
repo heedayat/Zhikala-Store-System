@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   CheckCircle2,
+  KeyRound,
   Plus,
   Search,
   ShieldCheck,
@@ -14,6 +15,7 @@ import { useTranslation } from '../contexts/I18nContext';
 import type { AppUser, UserRole } from '../types/inventory';
 import { formatActionError, formatNumber } from '../utils/formatters';
 import { getTranslations, interpolate, type AppLanguage } from '../utils/i18n';
+import { DEFAULT_SECURITY_PIN, isValidPin, normalizePinInput } from '../utils/pin';
 import {
   canDeleteUser,
   canModifyUserRole,
@@ -31,10 +33,15 @@ interface UsersViewProps {
   isLoading: boolean;
   loadError: string | null;
   currentUserEmail: string;
-  onAddUser: (input: { email: string; displayName: string; role: UserRole }) => Promise<void>;
+  onAddUser: (input: {
+    email: string;
+    displayName: string;
+    role: UserRole;
+    pin?: string;
+  }) => Promise<void>;
   onUpdateUser: (
     email: string,
-    updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active'>>
+    updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active' | 'pin'>>
   ) => Promise<void>;
   onDeleteUser: (email: string) => Promise<void>;
 }
@@ -71,7 +78,12 @@ function formatUserDate(date: Date | null | undefined, lang: AppLanguage): strin
 
 interface AddUserModalProps {
   existingUsers: AppUser[];
-  onAdd: (input: { email: string; displayName: string; role: UserRole }) => Promise<void>;
+  onAdd: (input: {
+    email: string;
+    displayName: string;
+    role: UserRole;
+    pin?: string;
+  }) => Promise<void>;
   onClose: () => void;
 }
 
@@ -82,6 +94,7 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [role, setRole] = useState<UserRole>('cashier');
+  const [pin, setPin] = useState('');
   const [errors, setErrors] = useState<NewUserValidationErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -101,7 +114,7 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
     e.preventDefault();
     if (isSaving) return;
 
-    const validation = validateNewUserForm({ email, displayName, role }, existingUsers, lang);
+    const validation = validateNewUserForm({ email, displayName, role, pin }, existingUsers, lang);
     if (!validation.valid) {
       setErrors(validation.errors);
       return;
@@ -224,6 +237,35 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
             </select>
           </div>
 
+          <div>
+            <label htmlFor="add-user-pin" className="block text-xs font-semibold text-slate-700 mb-1.5">
+              {t.users.pinLabel}
+            </label>
+            <input
+              id="add-user-pin"
+              type="text"
+              inputMode="numeric"
+              dir="ltr"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => {
+                setPin(normalizePinInput(e.target.value));
+                setErrors((prev) => ({ ...prev, pin: undefined }));
+              }}
+              placeholder={t.users.pinPlaceholder}
+              className={`ltr-isolate w-full h-10 px-3 rounded-lg border text-sm font-mono tabular-nums tracking-[0.3em] text-slate-900 placeholder:tracking-normal placeholder:text-slate-400 focus:outline-none focus:ring-2 ${
+                errors.pin
+                  ? 'border-red-400 focus:border-red-600 focus:ring-red-500/15'
+                  : 'border-slate-300 focus:border-blue-600 focus:ring-blue-600/15'
+              }`}
+            />
+            {errors.pin ? (
+              <p className="mt-1 text-xs text-red-600">{errors.pin}</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">{t.users.pinHint}</p>
+            )}
+          </div>
+
           <div className="pt-2 flex items-center justify-end gap-3">
             <button
               type="button"
@@ -247,6 +289,135 @@ function AddUserModal({ existingUsers, onAdd, onClose }: AddUserModalProps) {
   );
 }
 
+interface SetUserPinModalProps {
+  targetUser: AppUser;
+  onSavePin: (email: string, pin: string) => Promise<void>;
+  onClose: () => void;
+}
+
+function SetUserPinModal({ targetUser, onSavePin, onClose }: SetUserPinModalProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pin, setPin] = useState(
+    isValidPin(targetUser.pin) ? targetUser.pin : DEFAULT_SECURITY_PIN
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !isSaving) {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSaving, onClose]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (isSaving) return;
+    if (!isValidPin(pin)) {
+      setError(t.validation.pinInvalid);
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      await onSavePin(targetUser.email, pin);
+      onClose();
+    } catch (err) {
+      setError(formatActionError(err, 'Failed to update security PIN.'));
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      data-testid="set-user-pin-modal"
+      className="modal-backdrop-enter fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6"
+    >
+      <div className="modal-panel-enter bg-white border border-slate-200 rounded-xl shadow-xl w-full max-w-sm overflow-hidden text-start">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
+          <h2 id={titleId} className="text-sm font-bold text-slate-950">
+            {t.users.setPinTitle}
+          </h2>
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={onClose}
+            aria-label={t.common.close}
+            className="w-8 h-8 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center transition-colors"
+          >
+            <X className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <p className="text-xs text-slate-600 leading-relaxed">
+            {interpolate(t.users.setPinDesc, {
+              name: targetUser.displayName || targetUser.email,
+              email: targetUser.email,
+            })}
+          </p>
+
+          {error && (
+            <div role="alert" className="p-3 rounded-lg border border-red-200 bg-red-50 text-xs text-red-800">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="edit-user-pin-input" className="block text-xs font-semibold text-slate-700 mb-1.5">
+              {t.users.pinLabel}
+            </label>
+            <input
+              ref={inputRef}
+              id="edit-user-pin-input"
+              type="text"
+              inputMode="numeric"
+              dir="ltr"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => {
+                setPin(normalizePinInput(e.target.value));
+                setError(null);
+              }}
+              placeholder={t.users.pinPlaceholder}
+              className="ltr-isolate w-full h-11 px-3 rounded-lg border border-slate-300 text-base font-mono font-bold tabular-nums tracking-[0.35em] text-center text-slate-950 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15"
+            />
+            <p className="mt-1.5 text-xs text-slate-500">{t.users.pinHint}</p>
+          </div>
+
+          <div className="pt-1 flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={onClose}
+              className="min-h-[40px] px-4 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {t.common.cancel}
+            </button>
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="min-h-[40px] px-4 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 disabled:opacity-60"
+            >
+              {isSaving ? t.common.saving : t.users.savePinBtn}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function UsersView({
   users,
   isLoading,
@@ -260,6 +431,7 @@ export function UsersView({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [pinTargetUser, setPinTargetUser] = useState<AppUser | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
@@ -707,6 +879,17 @@ export function UsersView({
 
                           <td className="py-3.5 px-5 align-middle text-end">
                             <div className="inline-flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                data-testid={`set-pin-user-${userRow.email}`}
+                                disabled={isRowBusy}
+                                onClick={() => setPinTargetUser(userRow)}
+                                className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap"
+                              >
+                                <KeyRound className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                                {t.users.setPinBtn}
+                              </button>
+
                               {userRow.active ? (
                                 <button
                                   key="deactivate"
@@ -855,7 +1038,18 @@ export function UsersView({
                           </option>
                         </select>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center flex-wrap gap-2 shrink-0">
+                          <button
+                            type="button"
+                            data-testid={`mobile-set-pin-user-${userRow.email}`}
+                            disabled={isRowBusy}
+                            onClick={() => setPinTargetUser(userRow)}
+                            className="min-h-[40px] px-2.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-all duration-200 ease-out active:scale-[0.98] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                          >
+                            <KeyRound className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                            {t.users.setPinBtn}
+                          </button>
+
                           {userRow.active ? (
                             <button
                               type="button"
@@ -917,6 +1111,21 @@ export function UsersView({
           existingUsers={users}
           onAdd={onAddUser}
           onClose={() => setAddModalOpen(false)}
+        />
+      )}
+
+      {pinTargetUser && (
+        <SetUserPinModal
+          targetUser={pinTargetUser}
+          onSavePin={async (targetEmail, nextPin) => {
+            await onUpdateUser(targetEmail, { pin: nextPin });
+            setActionNotice(
+              interpolate(t.users.pinUpdatedNotice, {
+                name: pinTargetUser.displayName || pinTargetUser.email,
+              })
+            );
+          }}
+          onClose={() => setPinTargetUser(null)}
         />
       )}
 

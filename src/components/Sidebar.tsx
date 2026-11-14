@@ -1,6 +1,8 @@
 import {
   ArrowLeftRight,
   BarChart3,
+  Lock,
+  LockOpen,
   LogOut,
   Package,
   Settings,
@@ -8,10 +10,10 @@ import {
   Users,
 } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
-import type { NavSection, UserRole } from '../types/inventory';
-import { isManagerRole } from '../utils/users';
+import type { NavSection, NetworkSyncStatus, UserRole } from '../types/inventory';
 import { LanguageToggle } from './LanguageToggle';
 import { StoreLogo } from './StoreLogo';
+import { SyncStatusBadge } from './SyncStatusBadge';
 
 interface SidebarProps {
   shopName: string;
@@ -22,6 +24,12 @@ interface SidebarProps {
   onSelectSection: (section: NavSection) => void;
   userEmail: string;
   userRole: UserRole;
+  isManager: boolean;
+  canLockCounter: boolean;
+  isCounterLocked: boolean;
+  onToggleCounterLock: () => void;
+  syncStatus: NetworkSyncStatus;
+  hasPendingSync: boolean;
   onOpenSettings: () => void;
   onSignOut: () => void;
 }
@@ -35,27 +43,36 @@ export function Sidebar({
   onSelectSection,
   userEmail,
   userRole,
+  isManager,
+  canLockCounter,
+  isCounterLocked,
+  onToggleCounterLock,
+  syncStatus,
+  hasPendingSync,
   onOpenSettings,
   onSignOut,
 }: SidebarProps) {
   const { t, roleLabel, currencyUnit } = useTranslation();
-  const isManager = isManagerRole(userRole);
   const displaySubtitle = storeSubtitle?.trim() || t.common.defaultSubtitle;
 
   const navItems: {
     id: NavSection;
     label: string;
     icon: typeof Package;
+    lockedVisible?: boolean;
     managerOnly?: boolean;
   }[] = [
     { id: 'products', label: t.nav.products, icon: Package },
-    { id: 'sell', label: t.nav.sell, icon: ShoppingBag },
+    { id: 'sell', label: t.nav.sell, icon: ShoppingBag, lockedVisible: true },
     { id: 'stock', label: t.nav.stock, icon: ArrowLeftRight, managerOnly: true },
     { id: 'reports', label: t.nav.reports, icon: BarChart3, managerOnly: true },
     { id: 'users', label: t.nav.users, icon: Users, managerOnly: true },
   ];
 
-  const visibleItems = navItems.filter((item) => !item.managerOnly || isManager);
+  const visibleItems = navItems.filter((item) => {
+    if (isCounterLocked) return Boolean(item.lockedVisible);
+    return !item.managerOnly || isManager;
+  });
 
   return (
     <aside className="hidden md:flex w-64 shrink-0 bg-slate-50 border-e border-slate-200 flex-col justify-between min-h-screen select-none print-hidden">
@@ -75,7 +92,7 @@ export function Sidebar({
               </span>
             </div>
           </div>
-          {isManager && (
+          {isManager && !isCounterLocked && (
             <button
               type="button"
               onClick={onOpenSettings}
@@ -84,6 +101,32 @@ export function Sidebar({
               className="w-8 h-8 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-200/70 flex items-center justify-center transition-all duration-200 ease-out active:scale-[0.96] shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               <Settings className="w-4 h-4" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+
+        {/* Sync Status + Quick Counter Lock Strip */}
+        <div className="px-3 py-2 border-b border-slate-200 bg-white/75 flex flex-wrap items-center justify-between gap-1.5">
+          <SyncStatusBadge status={syncStatus} hasPendingSync={hasPendingSync} compact />
+
+          {canLockCounter && (
+            <button
+              type="button"
+              data-testid="sidebar-counter-lock-btn"
+              onClick={onToggleCounterLock}
+              title={isCounterLocked ? t.nav.unlockAdminTooltip : t.nav.lockCounterTooltip}
+              className={`min-h-[30px] px-2 rounded-md border text-[11px] font-semibold inline-flex items-center gap-1 transition-all duration-150 active:scale-[0.97] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600 ${
+                isCounterLocked
+                  ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-950'
+              }`}
+            >
+              {isCounterLocked ? (
+                <LockOpen className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
+              )}
+              <span>{isCounterLocked ? t.nav.unlockAdmin : t.nav.lockCounter}</span>
             </button>
           )}
         </div>
@@ -151,3 +194,4 @@ export function Sidebar({
     </aside>
   );
 }
+

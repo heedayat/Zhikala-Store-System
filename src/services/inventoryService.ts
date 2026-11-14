@@ -3,15 +3,24 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  increment,
   onSnapshot,
+  onSnapshotsInSync,
   runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { db, handleFirestoreError, OperationType, storage } from '../firebase';
+import {
+  db,
+  firestorePersistenceMode,
+  handleFirestoreError,
+  OperationType,
+  storage,
+} from '../firebase';
 import type {
   AppUser,
   PaymentMethod,
@@ -26,6 +35,18 @@ import type {
 } from '../types/inventory';
 import type { ValidatedProductPayload } from '../utils/productValidation';
 import { normalizeLogoUrl } from '../utils/formatters';
+import {
+  enqueuePendingOfflineSale,
+  loadOfflineUserCache,
+  loadPendingOfflineSales,
+  removePendingOfflineSale,
+  saveOfflineProductsCache,
+  saveOfflineSalesCache,
+  saveOfflineSettingsCache,
+  saveOfflineUserCache,
+  type PendingOfflineSale,
+} from '../utils/offlineCache';
+import { DEFAULT_SECURITY_PIN, isValidPin, saveCachedUserPin } from '../utils/pin';
 import { DEFAULT_WEEK_START_DAY, normalizeWeekStartDay } from '../utils/reports';
 import { normalizePaymentMethod } from '../utils/sales';
 import type { ValidatedStockAdjustment } from '../utils/stockMovements';
@@ -82,6 +103,7 @@ export function generateDocumentId(): string {
 function parseUserDoc(emailId: string, data: Record<string, unknown>): AppUser {
   const rawRole = String(data.role ?? '');
   const role: UserRole = isValidUserRole(rawRole) ? rawRole : 'cashier';
+  const rawPin = typeof data.pin === 'string' ? data.pin : undefined;
   const tsCreated = data.createdAt as { toDate?: () => Date } | undefined;
   const tsUpdated = data.updatedAt as { toDate?: () => Date } | undefined;
   return {
@@ -89,6 +111,7 @@ function parseUserDoc(emailId: string, data: Record<string, unknown>): AppUser {
     displayName: String(data.displayName ?? ''),
     role,
     active: Boolean(data.active),
+    ...(isValidPin(rawPin) ? { pin: rawPin } : {}),
     createdAt: tsCreated?.toDate ? tsCreated.toDate() : null,
     updatedAt: tsUpdated?.toDate ? tsUpdated.toDate() : null,
   };
@@ -193,12 +216,14 @@ export function subscribeToCurrentUserAccess(
       if (!snapshot.exists()) {
         if (isBootstrap) {
           void ensureBootstrapShopUsers(emailId, fallbackDisplayName).catch(() => {});
-          onAuthorized({
+          const bootstrapRecord: AppUser = {
             email: emailId,
             displayName: (fallbackDisplayName ?? '').trim().slice(0, 80) || 'Hidayat',
             role: 'admin',
             active: true,
-          });
+          };
+          saveOfflineUserCache(bootstrapRecord);
+          onAuthorized(bootstrapRecord);
           return;
         }
         onDenied();
@@ -210,14 +235,18 @@ export function subscribeToCurrentUserAccess(
       if (!isValidUserRole(rawRole) || !isAuthorizedUserRecord(record)) {
         if (isBootstrap) {
           void ensureBootstrapShopUsers(emailId, fallbackDisplayName).catch(() => {});
-          onAuthorized({
+          const bootstrapRecord: AppUser = {
             email: emailId,
-            displayName: record.displayName || (fallbackDisplayName ?? '').trim().slice(0, 80) || 'Hidayat',
+            displayName:
+              record.displayName || (fallbackDisplayName ?? '').trim().slice(0, 80) || 'Hidayat',
             role: 'admin',
             active: true,
+            ...(record.pin ? { pin: record.pin } : {}),
             createdAt: record.createdAt,
             updatedAt: record.updatedAt,
-          });
+          };
+          saveOfflineUserCache(bootstrapRecord);
+          onAuthorized(bootstrapRecord);
           return;
         }
         onDenied();
@@ -227,6 +256,10 @@ export function subscribeToCurrentUserAccess(
       if (isBootstrap && bootstrapAttemptedForEmail !== emailId) {
         void ensureBootstrapShopUsers(emailId, fallbackDisplayName).catch(() => {});
       }
+      saveOfflineUserCache(record);
+      if (isValidPin(record.pin)) {
+        saveCachedUserPin(record.email, record.pin);
+      }
       onAuthorized(record);
     },
     (error) => {
@@ -235,6 +268,18 @@ export function subscribeToCurrentUserAccess(
       if (code === 'permission-denied' || msg.includes('missing or insufficient permissions')) {
         onDenied();
         return;
+      }
+      // If device starts offline without IndexedDB cache ready, check localStorage cached user record
+      if (
+        (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        code === 'unavailable' ||
+        msg.includes('offline')
+      ) {
+        const cachedUser = loadOfflineUserCache(emailId);
+        if (cachedUser && isAuthorizedUserRecord(cachedUser)) {
+          onAuthorized(cachedUser);
+          return;
+        }
       }
       try {
         handleFirestoreError(error, OperationType.GET, path);
@@ -278,10 +323,12 @@ export async function createShopUser(input: {
   email: string;
   displayName: string;
   role: UserRole;
+  pin?: string;
 }): Promise<void> {
   const emailId = normalizeEmail(input.email);
   const path = `${USERS_COLLECTION}/${emailId}`;
   const docRef = doc(db, USERS_COLLECTION, emailId);
+  const resolvedPin = isValidPin(input.pin) ? input.pin : DEFAULT_SECURITY_PIN;
   try {
     await runTransaction(db, async (tx) => {
       const existingSnap = await tx.get(docRef);
@@ -292,9 +339,11 @@ export async function createShopUser(input: {
         displayName: input.displayName.trim().slice(0, 80),
         role: input.role,
         active: true,
+        pin: resolvedPin,
         createdAt: serverTimestamp(),
       });
     });
+    saveCachedUserPin(emailId, resolvedPin);
   } catch (error) {
     if (error instanceof StockTransactionError) throw error;
     handleFirestoreError(error, OperationType.CREATE, path);
@@ -303,7 +352,7 @@ export async function createShopUser(input: {
 
 export async function updateShopUser(
   rawEmail: string,
-  updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active'>>
+  updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active' | 'pin'>>
 ): Promise<void> {
   const emailId = normalizeEmail(rawEmail);
   const path = `${USERS_COLLECTION}/${emailId}`;
@@ -320,9 +369,15 @@ export async function updateShopUser(
   if (updates.active !== undefined) {
     payload.active = updates.active;
   }
+  if (updates.pin !== undefined && isValidPin(updates.pin)) {
+    payload.pin = updates.pin;
+  }
 
   try {
     await updateDoc(docRef, payload);
+    if (updates.pin && isValidPin(updates.pin)) {
+      saveCachedUserPin(emailId, updates.pin);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -342,13 +397,16 @@ export async function deleteShopUser(rawEmail: string): Promise<void> {
 
 export function subscribeToProducts(
   onData: (products: Product[]) => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  onSyncMeta?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const path = PRODUCTS_COLLECTION;
 
   return onSnapshot(
     collection(db, path),
+    { includeMetadataChanges: true },
     (snapshot) => {
+      onSyncMeta?.(snapshot.metadata.hasPendingWrites);
       const items: Product[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         return {
@@ -376,6 +434,7 @@ export function subscribeToProducts(
         };
       });
       items.sort((a, b) => (b.updatedAt?.getTime() ?? 0) - (a.updatedAt?.getTime() ?? 0));
+      saveOfflineProductsCache(items);
       onData(items);
     },
     (error) => {
@@ -390,13 +449,16 @@ export function subscribeToProducts(
 
 export function subscribeToStockMovements(
   onData: (movements: StockMovement[]) => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  onSyncMeta?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const path = STOCK_MOVEMENTS_COLLECTION;
 
   return onSnapshot(
     collection(db, path),
+    { includeMetadataChanges: true },
     (snapshot) => {
+      onSyncMeta?.(snapshot.metadata.hasPendingWrites);
       const items: StockMovement[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         const rawType = String(data.type ?? 'add');
@@ -438,13 +500,16 @@ export function subscribeToStockMovements(
 
 export function subscribeToSales(
   onData: (sales: Sale[]) => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  onSyncMeta?: (hasPendingWrites: boolean) => void
 ): Unsubscribe {
   const path = SALES_COLLECTION;
 
   return onSnapshot(
     collection(db, path),
+    { includeMetadataChanges: true },
     (snapshot) => {
+      onSyncMeta?.(snapshot.metadata.hasPendingWrites);
       const items: Sale[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         const rawItems = Array.isArray(data.items) ? data.items : [];
@@ -477,6 +542,7 @@ export function subscribeToSales(
         };
       });
       items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      saveOfflineSalesCache(items);
       onData(items);
     },
     (error) => {
@@ -505,7 +571,7 @@ export function subscribeToShopSettings(
         return;
       }
       const data = match.data();
-      onData({
+      const parsedSettings: ShopSettings = {
         ownerId: String(data.ownerId ?? fallbackOwnerId),
         shopName: String(data.shopName ?? 'Little Wonders'),
         storeSubtitle: typeof data.storeSubtitle === 'string' ? data.storeSubtitle : '',
@@ -515,7 +581,9 @@ export function subscribeToShopSettings(
         weekStartDay: normalizeWeekStartDay(
           typeof data.weekStartDay === 'number' ? data.weekStartDay : DEFAULT_WEEK_START_DAY
         ),
-      });
+      };
+      saveOfflineSettingsCache(parsedSettings);
+      onData(parsedSettings);
     },
     (error) => {
       try {
@@ -525,6 +593,10 @@ export function subscribeToShopSettings(
       }
     }
   );
+}
+
+export function subscribeToFirestoreInSync(onInSync: () => void): Unsubscribe {
+  return onSnapshotsInSync(db, onInSync);
 }
 
 export async function saveShopSettings(
@@ -758,132 +830,230 @@ export async function recordStockAdjustment(
   }
 }
 
-export async function completeSaleTransaction(
-  ownerId: string,
-  lineItems: SaleLineItem[],
-  note: string,
-  paymentMethod: PaymentMethod = 'cash',
-  recordedBy?: RecordedByInput
-): Promise<string> {
-  if (lineItems.length === 0) {
-    throw new StockTransactionError('Add at least one item before completing the sale.');
+function commitSaleBatch(input: {
+  saleId: string;
+  ownerId: string;
+  finalItems: SaleLineItem[];
+  totalAmount: number;
+  totalCost: number;
+  itemCount: number;
+  paymentMethod: PaymentMethod;
+  note: string;
+  recordedFields: { recordedByName?: string; recordedByEmail?: string };
+}): Promise<void> {
+  const batch = writeBatch(db);
+  const saleRef = doc(db, SALES_COLLECTION, input.saleId);
+
+  const saleDoc: Record<string, unknown> = {
+    ownerId: input.ownerId,
+    items: input.finalItems,
+    totalAmount: input.totalAmount,
+    totalCost: input.totalCost,
+    itemCount: input.itemCount,
+    paymentMethod: input.paymentMethod,
+    status: 'completed',
+    ...input.recordedFields,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (input.note) {
+    saleDoc.note = input.note;
   }
 
-  const saleId = generateDocumentId();
-  const saleRef = doc(db, SALES_COLLECTION, saleId);
-  const path = `${SALES_COLLECTION}/${saleId}`;
-  const cleanNote = note.trim().slice(0, 500);
-  const cleanPaymentMethod = normalizePaymentMethod(paymentMethod);
-  const recordedFields = buildRecordedByFields(recordedBy);
+  batch.set(saleRef, saleDoc);
 
-  // Aggregate quantities per productId so each product doc is read & updated once
-  const qtyByProduct = new Map<string, { quantity: number; fallbackName: string }>();
-  for (const item of lineItems) {
+  const qtyByProduct = new Map<string, { quantity: number; productName: string }>();
+  for (const item of input.finalItems) {
     const existing = qtyByProduct.get(item.productId);
     if (existing) {
       existing.quantity += item.quantity;
     } else {
       qtyByProduct.set(item.productId, {
         quantity: item.quantity,
-        fallbackName: item.productName,
+        productName: item.productName,
       });
     }
   }
 
-  try {
-    await runTransaction(db, async (tx) => {
-      const productSnaps = new Map<string, { name: string; currentQty: number; sellingPrice: number; costPrice: number; barcode: string }>();
-
-      // All reads must happen before any writes in a Firestore transaction
-      for (const productId of qtyByProduct.keys()) {
-        const productRef = doc(db, PRODUCTS_COLLECTION, productId);
-        const snap = await tx.get(productRef);
-        if (!snap.exists()) {
-          const fallback = qtyByProduct.get(productId)?.fallbackName ?? 'Product';
-          throw new StockTransactionError(`"${fallback}" no longer exists in inventory.`);
-        }
-        const data = snap.data();
-        productSnaps.set(productId, {
-          name: String(data.name ?? ''),
-          currentQty: Number(data.quantityInStock ?? 0),
-          sellingPrice: Number(data.sellingPrice ?? 0),
-          costPrice: Number(data.costPrice ?? 0),
-          barcode: String(data.barcode ?? ''),
-        });
-      }
-
-      const finalItems: SaleLineItem[] = lineItems.map((item) => {
-        const live = productSnaps.get(item.productId)!;
-        const unitPrice = Math.max(0, Math.round(item.unitPrice * 100) / 100);
-        return {
-          productId: item.productId,
-          productName: live.name || item.productName,
-          barcode: live.barcode,
-          quantity: item.quantity,
-          listPrice: live.sellingPrice,
-          unitPrice,
-          costPrice: live.costPrice,
-          lineTotal: Math.round(item.quantity * unitPrice * 100) / 100,
-        };
-      });
-
-      const totalAmount =
-        Math.round(finalItems.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
-      const totalCost =
-        Math.round(finalItems.reduce((sum, i) => sum + i.quantity * i.costPrice, 0) * 100) / 100;
-      const itemCount = finalItems.reduce((sum, i) => sum + i.quantity, 0);
-
-      const saleDoc: Record<string, unknown> = {
-        ownerId,
-        items: finalItems,
-        totalAmount,
-        totalCost,
-        itemCount,
-        paymentMethod: cleanPaymentMethod,
-        status: 'completed',
-        ...recordedFields,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      if (cleanNote) {
-        saleDoc.note = cleanNote;
-      }
-
-      tx.set(saleRef, saleDoc);
-
-      for (const [productId, agg] of qtyByProduct.entries()) {
-        const live = productSnaps.get(productId)!;
-        const nextQty = live.currentQty - agg.quantity;
-        const productRef = doc(db, PRODUCTS_COLLECTION, productId);
-        tx.update(productRef, {
-          quantityInStock: nextQty,
-          updatedAt: serverTimestamp(),
-        });
-
-        const movementRef = doc(db, STOCK_MOVEMENTS_COLLECTION, generateDocumentId());
-        const movementDoc: Record<string, unknown> = {
-          ownerId,
-          productId,
-          productName: live.name || agg.fallbackName,
-          type: 'sale',
-          quantityChange: -agg.quantity,
-          reason: 'Sale',
-          saleId,
-          ...recordedFields,
-          createdAt: serverTimestamp(),
-        };
-        if (cleanNote) {
-          movementDoc.note = cleanNote;
-        }
-        tx.set(movementRef, movementDoc);
-      }
+  for (const [productId, agg] of qtyByProduct.entries()) {
+    const productRef = doc(db, PRODUCTS_COLLECTION, productId);
+    batch.update(productRef, {
+      quantityInStock: increment(-agg.quantity),
+      updatedAt: serverTimestamp(),
     });
-    return saleId;
+
+    const movementRef = doc(db, STOCK_MOVEMENTS_COLLECTION, generateDocumentId());
+    const movementDoc: Record<string, unknown> = {
+      ownerId: input.ownerId,
+      productId,
+      productName: agg.productName,
+      type: 'sale',
+      quantityChange: -agg.quantity,
+      reason: 'Sale',
+      saleId: input.saleId,
+      ...input.recordedFields,
+      createdAt: serverTimestamp(),
+    };
+    if (input.note) {
+      movementDoc.note = input.note;
+    }
+    batch.set(movementRef, movementDoc);
+  }
+
+  return batch.commit();
+}
+
+export async function completeSaleTransaction(
+  ownerId: string,
+  lineItems: SaleLineItem[],
+  note: string,
+  paymentMethod: PaymentMethod = 'cash',
+  recordedBy?: RecordedByInput
+): Promise<{ saleId: string; queuedOffline: boolean }> {
+  if (lineItems.length === 0) {
+    throw new StockTransactionError('Add at least one item before completing the sale.');
+  }
+
+  const saleId = generateDocumentId();
+  const path = `${SALES_COLLECTION}/${saleId}`;
+  const cleanNote = note.trim().slice(0, 500);
+  const cleanPaymentMethod = normalizePaymentMethod(paymentMethod);
+  const recordedFields = buildRecordedByFields(recordedBy);
+
+  const finalItems: SaleLineItem[] = lineItems.map((item) => {
+    const unitPrice = Math.max(0, Math.round(item.unitPrice * 100) / 100);
+    return {
+      productId: item.productId,
+      productName: item.productName,
+      barcode: item.barcode,
+      quantity: item.quantity,
+      listPrice: item.listPrice,
+      unitPrice,
+      costPrice: item.costPrice,
+      lineTotal: Math.round(item.quantity * unitPrice * 100) / 100,
+    };
+  });
+
+  const totalAmount =
+    Math.round(finalItems.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
+  const totalCost =
+    Math.round(finalItems.reduce((sum, i) => sum + i.quantity * i.costPrice, 0) * 100) / 100;
+  const itemCount = finalItems.reduce((sum, i) => sum + i.quantity, 0);
+
+  const isBrowserOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+
+  // Fallback queue when running without IndexedDB persistence while offline
+  if (isBrowserOffline && firestorePersistenceMode === 'memory') {
+    enqueuePendingOfflineSale({
+      saleId,
+      ownerId,
+      items: finalItems,
+      totalAmount,
+      totalCost,
+      itemCount,
+      paymentMethod: cleanPaymentMethod,
+      note: cleanNote,
+      ...recordedFields,
+      createdAtIso: new Date().toISOString(),
+    });
+    return { saleId, queuedOffline: true };
+  }
+
+  try {
+    const commitPromise = commitSaleBatch({
+      saleId,
+      ownerId,
+      finalItems,
+      totalAmount,
+      totalCost,
+      itemCount,
+      paymentMethod: cleanPaymentMethod,
+      note: cleanNote,
+      recordedFields,
+    });
+
+    // Attach catch so background sync failures never cause unhandled rejection if returned early while offline
+    let settled = false;
+    commitPromise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    // IndexedDB persistence commits locally immediately, while commitPromise waits for server ACK.
+    // Give brief window when offline (to catch immediate local validation errors) or longer window online.
+    const waitMs = isBrowserOffline ? 150 : 3500;
+    const result = await Promise.race([
+      commitPromise.then(() => 'committed' as const),
+      new Promise<'queued'>((resolve) => setTimeout(() => resolve('queued'), waitMs)),
+    ]);
+
+    if (result === 'queued' && !settled) {
+      if (firestorePersistenceMode === 'memory') {
+        enqueuePendingOfflineSale({
+          saleId,
+          ownerId,
+          items: finalItems,
+          totalAmount,
+          totalCost,
+          itemCount,
+          paymentMethod: cleanPaymentMethod,
+          note: cleanNote,
+          ...recordedFields,
+          createdAtIso: new Date().toISOString(),
+        });
+      }
+      return { saleId, queuedOffline: true };
+    }
+
+    return { saleId, queuedOffline: false };
   } catch (error) {
     if (error instanceof StockTransactionError) throw error;
     handleFirestoreError(error, OperationType.WRITE, path);
   }
-  return saleId;
+}
+
+export async function flushPendingOfflineSalesQueue(
+  onProgress?: (remainingCount: number) => void
+): Promise<number> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return loadPendingOfflineSales().length;
+  }
+
+  const queue: PendingOfflineSale[] = loadPendingOfflineSales();
+  if (queue.length === 0) {
+    onProgress?.(0);
+    return 0;
+  }
+
+  for (const entry of queue) {
+    try {
+      await commitSaleBatch({
+        saleId: entry.saleId,
+        ownerId: entry.ownerId,
+        finalItems: entry.items,
+        totalAmount: entry.totalAmount,
+        totalCost: entry.totalCost,
+        itemCount: entry.itemCount,
+        paymentMethod: entry.paymentMethod,
+        note: entry.note,
+        recordedFields: {
+          ...(entry.recordedByName ? { recordedByName: entry.recordedByName } : {}),
+          ...(entry.recordedByEmail ? { recordedByEmail: entry.recordedByEmail } : {}),
+        },
+      });
+      const remaining = removePendingOfflineSale(entry.saleId);
+      onProgress?.(remaining.length);
+    } catch {
+      // Stop flushing until connection is stable
+      break;
+    }
+  }
+
+  return loadPendingOfflineSales().length;
 }
 
 export async function voidSaleTransaction(

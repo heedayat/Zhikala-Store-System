@@ -58,6 +58,7 @@ interface SellViewProps {
   logoUrl?: string;
   currency: string;
   hideCostDetails?: boolean;
+  isOnline?: boolean;
   onCompleteSale: (
     lineItems: SaleLineItem[],
     note: string,
@@ -354,6 +355,7 @@ export function SellView({
   logoUrl,
   currency,
   hideCostDetails = false,
+  isOnline = true,
   onCompleteSale,
   onVoidSale,
 }: SellViewProps) {
@@ -374,6 +376,7 @@ export function SellView({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
+  const [lastSaleSavedOffline, setLastSaleSavedOffline] = useState(false);
   const [mobileSubTab, setMobileSubTab] = useState<'pos' | 'history'>('pos');
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
 
@@ -488,6 +491,7 @@ export function SellView({
     setSubmitError(null);
 
     try {
+      const savedOffline = !isOnline;
       const lineItems = buildSaleLineItems(cart, products);
       const savedSale = await onCompleteSale(lineItems, saleNote, paymentMethod);
       setCart([]);
@@ -497,6 +501,7 @@ export function SellView({
       setScanFeedback(null);
       setConfirmClearOpen(false);
       setMobileCartOpen(false);
+      setLastSaleSavedOffline(savedOffline);
       setLastCompletedSale(savedSale);
     } catch (err) {
       setSubmitError(formatActionError(err, t.auth.verifyErrorFallback));
@@ -835,9 +840,9 @@ export function SellView({
           {lastCompletedSale && (
             <div
               role="status"
-              className="mx-4 md:mx-6 mt-3 md:mt-4 px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shrink-0 toast-enter"
+              className="mx-4 md:mx-6 mt-3 md:mt-4 px-3.5 sm:px-4 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 sm:gap-3 shrink-0 toast-enter min-w-0"
             >
-              <div className="flex items-center gap-2 text-xs text-emerald-950 min-w-0 flex-wrap">
+              <div className="flex items-center gap-2 text-xs text-emerald-950 min-w-0 flex-1 flex-wrap">
                 <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
                 <span className="font-semibold">
                   {t.sell.saleCompleted} ·{' '}
@@ -848,7 +853,7 @@ export function SellView({
                 <span className="px-1.5 py-0.5 rounded border border-emerald-300 bg-white text-[11px] font-semibold text-emerald-900 whitespace-nowrap">
                   {paymentLabel(lastCompletedSale.paymentMethod)}
                 </span>
-                <span className="text-emerald-800 truncate">
+                <span className="text-emerald-800 truncate max-w-full">
                   (
                   <span dir="ltr" className="ltr-isolate font-mono">
                     {formatNumber(lastCompletedSale.itemCount)}
@@ -856,6 +861,14 @@ export function SellView({
                   {lastCompletedSale.itemCount === 1 ? t.common.item : t.common.items}
                   {lastCompletedSale.note ? ` · ${lastCompletedSale.note}` : ''})
                 </span>
+                {lastSaleSavedOffline && (
+                  <span
+                    data-testid="offline-saved-sale-note"
+                    className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-[11px] font-semibold text-amber-900 leading-snug max-w-full"
+                  >
+                    {t.nav.offlineSavedNote}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button

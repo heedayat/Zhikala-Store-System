@@ -359,6 +359,7 @@ export const PREVIEW_SEED_USERS: AppUser[] = [
     displayName: 'Hidayat',
     role: 'admin',
     active: true,
+    pin: '1234',
     createdAt: new Date(nowMs - 21 * DAY_MS),
     updatedAt: new Date(nowMs - 21 * DAY_MS),
   },
@@ -367,6 +368,7 @@ export const PREVIEW_SEED_USERS: AppUser[] = [
     displayName: 'Shakar',
     role: 'owner',
     active: true,
+    pin: '1234',
     createdAt: new Date(nowMs - 14 * DAY_MS),
     updatedAt: new Date(nowMs - 14 * DAY_MS),
   },
@@ -375,8 +377,10 @@ export const PREVIEW_SEED_USERS: AppUser[] = [
     displayName: 'Noor',
     role: 'cashier',
     active: true,
+    pin: '1234',
     createdAt: new Date(nowMs - 7 * DAY_MS),
     updatedAt: new Date(nowMs - 7 * DAY_MS),
   },
 ];
+
 

@@ -8,12 +8,14 @@ import {
   createProduct,
   createShopUser,
   deleteShopUser,
+  flushPendingOfflineSalesQueue,
   generateDocumentId,
   recordStockAdjustment,
   saveShopSettings,
   setProductArchived,
   subscribeToAllUsers,
   subscribeToCurrentUserAccess,
+  subscribeToFirestoreInSync,
   subscribeToProducts,
   subscribeToSales,
   subscribeToShopSettings,
@@ -36,6 +38,24 @@ import type {
 } from './types/inventory';
 import { extractUsedCategories, formatActionError } from './utils/formatters';
 import { interpolate } from './utils/i18n';
+import {
+  applyPendingSalesToProducts,
+  computeNetworkSyncStatus,
+  hasUnsyncedLocalChanges,
+  loadOfflineProductsCache,
+  loadOfflineSalesCache,
+  loadOfflineSettingsCache,
+  loadPendingOfflineSales,
+  mergePendingSalesIntoList,
+  type PendingOfflineSale,
+} from './utils/offlineCache';
+import {
+  isValidPin,
+  loadCachedUserPin,
+  resolveUserPin,
+  saveCachedUserPin,
+  verifySecurityPin,
+} from './utils/pin';
 import type { ValidatedProductPayload } from './utils/productValidation';
 import type { ValidatedStockAdjustment } from './utils/stockMovements';
 import {
@@ -58,6 +78,8 @@ import {
   validateNewUserForm,
 } from './utils/users';
 import { LoginScreen } from './components/LoginScreen';
+import { PinLockScreen } from './components/PinLockScreen';
+import { CounterUnlockModal } from './components/CounterUnlockModal';
 import { MobileBottomNav, MobileTopHeader } from './components/MobileNav';
 import { Sidebar } from './components/Sidebar';
 import { ProductsView } from './components/ProductsView';
@@ -202,6 +224,45 @@ function loadPreviewUsers(): AppUser[] {
   }
 }
 
+function resolvePreviewCurrentUser(variant: PreviewModeVariant): AppUser | null {
+  if (variant === 'denied') return null;
+  const savedUsers = loadPreviewUsers();
+  if (variant === 'owner') {
+    return (
+      savedUsers.find((u) => u.role === 'owner' && u.active) ??
+      PREVIEW_SEED_USERS.find((u) => u.role === 'owner') ?? {
+        email: 'shakarawat007@gmail.com',
+        displayName: 'Shakar',
+        role: 'owner',
+        active: true,
+        pin: '1234',
+      }
+    );
+  }
+  if (variant === 'cashier') {
+    return (
+      savedUsers.find((u) => u.role === 'cashier' && u.active) ??
+      PREVIEW_SEED_USERS.find((u) => u.role === 'cashier') ?? {
+        email: 'cashier@littlewonders.shop',
+        displayName: 'Noor (Cashier)',
+        role: 'cashier',
+        active: true,
+        pin: '1234',
+      }
+    );
+  }
+  return (
+    savedUsers.find((u) => u.role === 'admin' && u.active) ??
+    PREVIEW_SEED_USERS.find((u) => u.role === 'admin') ?? {
+      email: 'gamerhidayatgamer@gmail.com',
+      displayName: 'Hidayat',
+      role: 'admin',
+      active: true,
+      pin: '1234',
+    }
+  );
+}
+
 export default function App() {
   const { lang, t } = useTranslation();
   const [previewMode] = useState<boolean>(() => isAutostartPreview());
@@ -216,37 +277,28 @@ export default function App() {
   );
   const [accessError, setAccessError] = useState<string | null>(null);
   const [accessCheckTick, setAccessCheckTick] = useState(0);
-  const [currentUserRecord, setCurrentUserRecord] = useState<AppUser | null>(() => {
-    if (!previewMode || previewVariant === 'denied') return null;
-    if (previewVariant === 'owner') {
-      return (
-        PREVIEW_SEED_USERS.find((u) => u.role === 'owner') ?? {
-          email: 'shakarawat007@gmail.com',
-          displayName: 'Shakar',
-          role: 'owner',
-          active: true,
-        }
-      );
-    }
-    if (previewVariant === 'cashier') {
-      return (
-        PREVIEW_SEED_USERS.find((u) => u.role === 'cashier') ?? {
-          email: 'cashier@littlewonders.shop',
-          displayName: 'Noor (Cashier)',
-          role: 'cashier',
-          active: true,
-        }
-      );
-    }
-    return (
-      PREVIEW_SEED_USERS.find((u) => u.role === 'admin') ?? {
-        email: 'gamerhidayatgamer@gmail.com',
-        displayName: 'Hidayat',
-        role: 'admin',
-        active: true,
-      }
-    );
+  const [currentUserRecord, setCurrentUserRecord] = useState<AppUser | null>(() =>
+    previewMode ? resolvePreviewCurrentUser(previewVariant) : null
+  );
+
+  // Startup Security PIN Gate & Counter Cashier Lock states
+  const [isPinUnlocked, setIsPinUnlocked] = useState<boolean>(false);
+  const [isCounterLocked, setIsCounterLocked] = useState<boolean>(false);
+  const [unlockModalOpen, setUnlockModalOpen] = useState<boolean>(false);
+
+  // Offline / Network sync tracking
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [pendingWritesFlags, setPendingWritesFlags] = useState({
+    products: false,
+    sales: false,
+    movements: false,
   });
+  const [pendingOfflineQueue, setPendingOfflineQueue] = useState<PendingOfflineSale[]>(() =>
+    loadPendingOfflineSales()
+  );
+  const [previewPendingSyncCount, setPreviewPendingSyncCount] = useState<number>(0);
 
   const [activeSection, setActiveSection] = useState<NavSection>(() =>
     previewMode && previewVariant === 'cashier' ? 'sell' : 'products'
@@ -323,6 +375,38 @@ export default function App() {
     document.title = effectiveShopName;
   }, [effectiveShopName]);
 
+  // Browser Online/Offline listener + Pending queue auto-flush
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function handleOnline() {
+      setIsOnline(true);
+      if (previewMode) {
+        setPreviewPendingSyncCount((count) => {
+          if (count > 0) {
+            setTimeout(() => setPreviewPendingSyncCount(0), 450);
+          }
+          return count;
+        });
+      } else {
+        void flushPendingOfflineSalesQueue(() => {
+          setPendingOfflineQueue(loadPendingOfflineSales());
+        }).then(() => {
+          setPendingOfflineQueue(loadPendingOfflineSales());
+        });
+      }
+    }
+    function handleOffline() {
+      setIsOnline(false);
+    }
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [previewMode]);
+
   // Firebase Auth listener
   useEffect(() => {
     if (previewMode) return;
@@ -334,6 +418,9 @@ export default function App() {
         setAccessState('loading');
         setCurrentUserRecord(null);
         setAccessError(null);
+        setIsPinUnlocked(false);
+        setIsCounterLocked(false);
+        setUnlockModalOpen(false);
         setProducts([]);
         setMovements([]);
         setSales([]);
@@ -394,18 +481,26 @@ export default function App() {
     currentUserRecord && isValidUserRole(currentUserRecord.role)
       ? currentUserRecord.role
       : 'cashier';
-  const isManager = isManagerRole(effectiveRole);
+  const baseIsManager = isManagerRole(effectiveRole);
+  const canLockCounter = baseIsManager;
+  const isManager = baseIsManager && !isCounterLocked;
 
-  // Land Cashiers on Sell and keep restricted sections inaccessible to Cashiers
+  // Land Cashiers on Sell and keep restricted sections inaccessible to Cashiers or when Counter is Locked
   useEffect(() => {
     if (!isAuthorized) return;
+    if (isCounterLocked) {
+      if (activeSection !== 'sell') {
+        setActiveSection('sell');
+      }
+      return;
+    }
     if (
       !isManager &&
       (activeSection === 'stock' || activeSection === 'reports' || activeSection === 'users')
     ) {
       setActiveSection('sell');
     }
-  }, [activeSection, isAuthorized, isManager]);
+  }, [activeSection, isAuthorized, isManager, isCounterLocked]);
 
   useEffect(() => {
     if (!previewMode && isAuthorized && effectiveRole === 'cashier') {
@@ -420,6 +515,7 @@ export default function App() {
         setIsLoadingProducts(false);
         setIsLoadingMovements(false);
         setIsLoadingSales(false);
+        setPendingWritesFlags({ products: false, sales: false, movements: false });
         setProducts([]);
         setMovements([]);
         setSales([]);
@@ -427,8 +523,21 @@ export default function App() {
       return;
     }
 
-    setIsLoadingProducts(true);
-    setIsLoadingSales(true);
+    const offlineOnMount = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (offlineOnMount) {
+      const cachedProds = loadOfflineProductsCache();
+      const cachedSales = loadOfflineSalesCache();
+      const cachedSettings = loadOfflineSettingsCache();
+      if (cachedProds) setProducts(cachedProds);
+      if (cachedSales) setSales(cachedSales);
+      if (cachedSettings) setShopSettings(cachedSettings);
+      setIsLoadingProducts(cachedProds === null);
+      setIsLoadingSales(cachedSales === null);
+    } else {
+      setIsLoadingProducts(true);
+      setIsLoadingSales(true);
+    }
+
     setLoadError(null);
     setSalesLoadError(null);
 
@@ -438,13 +547,24 @@ export default function App() {
         setIsLoadingProducts(false);
       },
       (err) => {
+        const cachedProds = loadOfflineProductsCache();
+        if (cachedProds && typeof navigator !== 'undefined' && !navigator.onLine) {
+          setProducts(cachedProds);
+          setIsLoadingProducts(false);
+          return;
+        }
         setLoadError(formatActionError(err, 'Failed to load products.'));
         setIsLoadingProducts(false);
+      },
+      (hasPendingWrites) => {
+        setPendingWritesFlags((prev) =>
+          prev.products === hasPendingWrites ? prev : { ...prev, products: hasPendingWrites }
+        );
       }
     );
 
     let unsubMovements: (() => void) | undefined;
-    if (isManager) {
+    if (baseIsManager) {
       setIsLoadingMovements(true);
       setMovementsLoadError(null);
       unsubMovements = subscribeToStockMovements(
@@ -455,6 +575,11 @@ export default function App() {
         (err) => {
           setMovementsLoadError(formatActionError(err, 'Failed to load stock history.'));
           setIsLoadingMovements(false);
+        },
+        (hasPendingWrites) => {
+          setPendingWritesFlags((prev) =>
+            prev.movements === hasPendingWrites ? prev : { ...prev, movements: hasPendingWrites }
+          );
         }
       );
     } else {
@@ -469,8 +594,19 @@ export default function App() {
         setIsLoadingSales(false);
       },
       (err) => {
+        const cachedSales = loadOfflineSalesCache();
+        if (cachedSales && typeof navigator !== 'undefined' && !navigator.onLine) {
+          setSales(cachedSales);
+          setIsLoadingSales(false);
+          return;
+        }
         setSalesLoadError(formatActionError(err, 'Failed to load sales history.'));
         setIsLoadingSales(false);
+      },
+      (hasPendingWrites) => {
+        setPendingWritesFlags((prev) =>
+          prev.sales === hasPendingWrites ? prev : { ...prev, sales: hasPendingWrites }
+        );
       }
     );
 
@@ -493,25 +629,38 @@ export default function App() {
       }
     );
 
+    const unsubInSync = subscribeToFirestoreInSync(() => {
+      setPendingWritesFlags({ products: false, sales: false, movements: false });
+    });
+
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      void flushPendingOfflineSalesQueue(() => {
+        setPendingOfflineQueue(loadPendingOfflineSales());
+      }).then(() => {
+        setPendingOfflineQueue(loadPendingOfflineSales());
+      });
+    }
+
     return () => {
       unsubProducts();
       unsubMovements?.();
       unsubSales();
       unsubSettings();
+      unsubInSync();
     };
-  }, [previewMode, authReady, user, isAuthorized, isManager]);
+  }, [previewMode, authReady, user, isAuthorized, baseIsManager]);
 
   // Users directory subscription (Admin & Owner)
   useEffect(() => {
     if (previewMode) {
       setIsLoadingUsers(false);
-      if (!isManager) {
+      if (!baseIsManager) {
         setUsersList([]);
       }
       return;
     }
 
-    if (!authReady || !user || !isAuthorized || !isManager) {
+    if (!authReady || !user || !isAuthorized || !baseIsManager) {
       setUsersList([]);
       setIsLoadingUsers(false);
       setUsersLoadError(null);
@@ -533,9 +682,34 @@ export default function App() {
     );
 
     return () => unsubUsers();
-  }, [previewMode, authReady, user, isAuthorized, isManager]);
+  }, [previewMode, authReady, user, isAuthorized, baseIsManager]);
 
-  const usedCategories = useMemo(() => extractUsedCategories(products), [products]);
+  const effectiveProducts = useMemo(
+    () => (previewMode ? products : applyPendingSalesToProducts(products, pendingOfflineQueue)),
+    [previewMode, products, pendingOfflineQueue]
+  );
+  const effectiveSales = useMemo(
+    () => (previewMode ? sales : mergePendingSalesIntoList(sales, pendingOfflineQueue)),
+    [previewMode, sales, pendingOfflineQueue]
+  );
+
+  const hasAnyPendingWrites =
+    pendingWritesFlags.products || pendingWritesFlags.sales || pendingWritesFlags.movements;
+  const totalQueuedOfflineCount = previewMode
+    ? previewPendingSyncCount
+    : pendingOfflineQueue.length;
+  const syncInput = {
+    isOnline,
+    hasPendingWrites: hasAnyPendingWrites,
+    pendingOfflineQueueCount: totalQueuedOfflineCount,
+  };
+  const networkSyncStatus = computeNetworkSyncStatus(syncInput);
+  const hasPendingSync = hasUnsyncedLocalChanges(syncInput);
+
+  const usedCategories = useMemo(
+    () => extractUsedCategories(effectiveProducts),
+    [effectiveProducts]
+  );
 
   async function handleSignIn() {
     setIsSigningIn(true);
@@ -561,6 +735,9 @@ export default function App() {
     setUsersList([]);
     setShopSettings(null);
     setCurrentUserRecord(null);
+    setIsPinUnlocked(false);
+    setIsCounterLocked(false);
+    setUnlockModalOpen(false);
     setAccessState('loading');
     setAccessError(null);
     setActiveSection('products');
@@ -791,17 +968,21 @@ export default function App() {
       setMovements(updatedMovements);
       setSales(updatedSales);
       persistPreviewState(updatedProducts, updatedMovements, updatedSales);
+      if (!isOnline) {
+        setPreviewPendingSyncCount((c) => c + 1);
+      }
       return newSale;
     }
 
     if (!user) throw new Error(t.auth.mustBeSignedIn);
-    const saleId = await completeSaleTransaction(
+    const { saleId } = await completeSaleTransaction(
       user.uid,
       lineItems,
       cleanNote,
       cleanMethod,
       currentRecordedBy
     );
+    setPendingOfflineQueue(loadPendingOfflineSales());
     return {
       id: saleId,
       ownerId: user.uid,
@@ -889,6 +1070,34 @@ export default function App() {
     await setProductArchived(productId, archive);
   }
 
+  const displayEmail = previewMode
+    ? currentUserRecord?.email ?? 'gamerhidayatgamer@gmail.com'
+    : currentUserRecord?.email ?? normalizeEmail(user?.email ?? '');
+  const currentUserSecurityPin = resolveUserPin(
+    currentUserRecord,
+    loadCachedUserPin(displayEmail)
+  );
+
+  function verifyCurrentUserPin(enteredPin: string): boolean {
+    return verifySecurityPin(
+      enteredPin,
+      currentUserRecord,
+      loadCachedUserPin(displayEmail)
+    );
+  }
+
+  function handleToggleCounterLock() {
+    if (!canLockCounter) return;
+    if (isCounterLocked) {
+      setUnlockModalOpen(true);
+    } else {
+      setIsCounterLocked(true);
+      setSettingsOpen(false);
+      setFormModalState({ open: false, editingProduct: null });
+      setActiveSection('sell');
+    }
+  }
+
   async function handleSaveSettings(values: StoreSettingsFormValues) {
     if (!isManager) {
       throw new Error(t.validation.onlyManagersSettings);
@@ -901,6 +1110,10 @@ export default function App() {
       logoUrl: values.logoUrl,
     });
     saveCachedBranding(values.shopName, values.storeSubtitle, values.logoUrl);
+
+    const nextPin = values.securityPin;
+    const shouldUpdatePin =
+      isValidPin(nextPin) && nextPin !== currentUserSecurityPin;
 
     if (previewMode) {
       const updated: ShopSettings = {
@@ -918,8 +1131,24 @@ export default function App() {
       } catch {
         // Ignore
       }
+
+      if (shouldUpdatePin && nextPin) {
+        const normalizedSelf = normalizeEmail(displayEmail);
+        saveCachedUserPin(normalizedSelf, nextPin);
+        setCurrentUserRecord((prev) => (prev ? { ...prev, pin: nextPin } : prev));
+        setUsersList((prev) => {
+          const nextUsers = prev.map((u) =>
+            normalizeEmail(u.email) === normalizedSelf
+              ? { ...u, pin: nextPin, updatedAt: new Date() }
+              : u
+          );
+          persistPreviewUsers(nextUsers);
+          return nextUsers;
+        });
+      }
       return;
     }
+
     if (!user) throw new Error(t.auth.mustBeSignedIn);
     await saveShopSettings(
       user.uid,
@@ -933,13 +1162,20 @@ export default function App() {
       },
       shopSettings !== null
     );
+
+    if (shouldUpdatePin && nextPin) {
+      await updateShopUser(displayEmail, { pin: nextPin });
+      saveCachedUserPin(displayEmail, nextPin);
+      setCurrentUserRecord((prev) => (prev ? { ...prev, pin: nextPin } : prev));
+    }
   }
 
-  const displayEmail = previewMode
-    ? currentUserRecord?.email ?? 'gamerhidayatgamer@gmail.com'
-    : currentUserRecord?.email ?? normalizeEmail(user?.email ?? '');
-
-  async function handleAddUser(input: { email: string; displayName: string; role: UserRole }) {
+  async function handleAddUser(input: {
+    email: string;
+    displayName: string;
+    role: UserRole;
+    pin?: string;
+  }) {
     if (!isManager) {
       throw new Error(t.validation.onlyManagersAddUsers);
     }
@@ -949,6 +1185,7 @@ export default function App() {
         validation.errors.email ??
         validation.errors.displayName ??
         validation.errors.role ??
+        validation.errors.pin ??
         t.validation.userRoleInvalid;
       throw new Error(firstError);
     }
@@ -960,6 +1197,7 @@ export default function App() {
         displayName: validation.data.displayName,
         role: validation.data.role,
         active: true,
+        pin: validation.data.pin,
         createdAt: now,
         updatedAt: now,
       };
@@ -969,6 +1207,7 @@ export default function App() {
         if (a.role !== b.role) return roleRank(a.role) - roleRank(b.role);
         return a.email.localeCompare(b.email);
       });
+      saveCachedUserPin(validation.data.email, validation.data.pin);
       setUsersList(nextUsers);
       persistPreviewUsers(nextUsers);
       return;
@@ -979,7 +1218,7 @@ export default function App() {
 
   async function handleUpdateUser(
     rawEmail: string,
-    updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active'>>
+    updates: Partial<Pick<AppUser, 'displayName' | 'role' | 'active' | 'pin'>>
   ) {
     if (!isManager) {
       throw new Error(t.validation.onlyManagersUpdateUsers);
@@ -1005,6 +1244,10 @@ export default function App() {
       }
     }
 
+    if (updates.pin !== undefined && !isValidPin(updates.pin)) {
+      throw new Error(t.validation.pinInvalid);
+    }
+
     if (previewMode) {
       const now = new Date();
       const roleRank = (r: UserRole) => (r === 'admin' ? 0 : r === 'owner' ? 1 : 2);
@@ -1018,6 +1261,7 @@ export default function App() {
                   : {}),
                 ...(updates.role !== undefined ? { role: updates.role } : {}),
                 ...(updates.active !== undefined ? { active: updates.active } : {}),
+                ...(updates.pin !== undefined ? { pin: updates.pin } : {}),
                 updatedAt: now,
               }
             : u
@@ -1029,10 +1273,19 @@ export default function App() {
         });
       setUsersList(nextUsers);
       persistPreviewUsers(nextUsers);
+      if (updates.pin) {
+        saveCachedUserPin(emailId, updates.pin);
+        if (emailId === normalizeEmail(displayEmail)) {
+          setCurrentUserRecord((prev) => (prev ? { ...prev, pin: updates.pin } : prev));
+        }
+      }
       return;
     }
 
     await updateShopUser(emailId, updates);
+    if (updates.pin && emailId === normalizeEmail(displayEmail)) {
+      setCurrentUserRecord((prev) => (prev ? { ...prev, pin: updates.pin } : prev));
+    }
   }
 
   async function handleDeleteUser(rawEmail: string) {
@@ -1160,13 +1413,41 @@ export default function App() {
     );
   }
 
+  if (!isPinUnlocked) {
+    return (
+      <PinLockScreen
+        shopName={effectiveShopName}
+        storeSubtitle={effectiveStoreSubtitle}
+        logoUrl={effectiveLogoUrl}
+        userDisplayName={currentActorName}
+        userEmail={displayEmail}
+        userRole={effectiveRole}
+        syncStatus={networkSyncStatus}
+        hasPendingSync={hasPendingSync}
+        showSwitchAccount={!previewMode}
+        onVerifyPin={(enteredPin) => {
+          const ok = verifyCurrentUserPin(enteredPin);
+          if (ok) {
+            setIsPinUnlocked(true);
+          }
+          return ok;
+        }}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
   const ownerId = previewMode ? 'preview-owner' : user!.uid;
-  const resolvedSection: NavSection =
-    !isManager && (activeSection === 'stock' || activeSection === 'reports' || activeSection === 'users')
+  const resolvedSection: NavSection = isCounterLocked
+    ? 'sell'
+    : !isManager && (activeSection === 'stock' || activeSection === 'reports' || activeSection === 'users')
       ? 'sell'
       : activeSection;
 
   function handleSectionChange(nextSection: NavSection) {
+    if (isCounterLocked && nextSection !== 'sell') {
+      return;
+    }
     if (
       !isManager &&
       (nextSection === 'stock' || nextSection === 'reports' || nextSection === 'users')
@@ -1176,6 +1457,8 @@ export default function App() {
     setActiveSection(nextSection);
   }
 
+  const displayedRole: UserRole = isCounterLocked ? 'cashier' : effectiveRole;
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-white text-slate-900">
       <MobileTopHeader
@@ -1183,7 +1466,13 @@ export default function App() {
         logoUrl={effectiveLogoUrl}
         currency={effectiveCurrency}
         userEmail={displayEmail}
-        userRole={effectiveRole}
+        userRole={displayedRole}
+        isManager={isManager}
+        canLockCounter={canLockCounter}
+        isCounterLocked={isCounterLocked}
+        onToggleCounterLock={handleToggleCounterLock}
+        syncStatus={networkSyncStatus}
+        hasPendingSync={hasPendingSync}
         onOpenSettings={() => {
           if (isManager) setSettingsOpen(true);
         }}
@@ -1198,7 +1487,13 @@ export default function App() {
         activeSection={resolvedSection}
         onSelectSection={handleSectionChange}
         userEmail={displayEmail}
-        userRole={effectiveRole}
+        userRole={displayedRole}
+        isManager={isManager}
+        canLockCounter={canLockCounter}
+        isCounterLocked={isCounterLocked}
+        onToggleCounterLock={handleToggleCounterLock}
+        syncStatus={networkSyncStatus}
+        hasPendingSync={hasPendingSync}
         onOpenSettings={() => {
           if (isManager) setSettingsOpen(true);
         }}
@@ -1207,7 +1502,7 @@ export default function App() {
 
       {resolvedSection === 'products' ? (
         <ProductsView
-          products={products}
+          products={effectiveProducts}
           isLoading={isLoadingProducts}
           loadError={loadError}
           currency={effectiveCurrency}
@@ -1238,8 +1533,8 @@ export default function App() {
         />
       ) : resolvedSection === 'sell' ? (
         <SellView
-          products={products}
-          sales={sales}
+          products={effectiveProducts}
+          sales={effectiveSales}
           users={usersList}
           isLoadingSales={isLoadingSales}
           loadError={salesLoadError}
@@ -1249,12 +1544,13 @@ export default function App() {
           logoUrl={effectiveLogoUrl}
           currency={effectiveCurrency}
           hideCostDetails={!isManager}
+          isOnline={isOnline}
           onCompleteSale={handleCompleteSale}
           onVoidSale={handleVoidSale}
         />
       ) : resolvedSection === 'stock' ? (
         <StockView
-          products={products}
+          products={effectiveProducts}
           movements={movements}
           users={usersList}
           isLoadingMovements={isLoadingMovements}
@@ -1274,8 +1570,8 @@ export default function App() {
         />
       ) : (
         <ReportsView
-          products={products}
-          sales={sales}
+          products={effectiveProducts}
+          sales={effectiveSales}
           movements={movements}
           users={usersList}
           isLoading={isLoadingProducts || isLoadingSales}
@@ -1303,7 +1599,8 @@ export default function App() {
       <MobileBottomNav
         activeSection={resolvedSection}
         onSelectSection={handleSectionChange}
-        userRole={effectiveRole}
+        isManager={isManager}
+        isCounterLocked={isCounterLocked}
       />
 
       {isManager && formModalState.open && (
@@ -1311,7 +1608,7 @@ export default function App() {
           ownerId={ownerId}
           editingProduct={formModalState.editingProduct}
           initialBarcode={formModalState.initialBarcode}
-          allProducts={products}
+          allProducts={effectiveProducts}
           usedCategories={usedCategories}
           currency={effectiveCurrency}
           isPreviewMode={previewMode}
@@ -1339,11 +1636,27 @@ export default function App() {
           initialLogoUrl={effectiveLogoUrl}
           initialCurrency={effectiveCurrency}
           initialWeekStartDay={effectiveWeekStartDay}
-          products={products}
-          sales={sales}
+          initialSecurityPin={currentUserSecurityPin}
+          products={effectiveProducts}
+          sales={effectiveSales}
           movements={movements}
           onSave={handleSaveSettings}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {canLockCounter && (
+        <CounterUnlockModal
+          open={unlockModalOpen}
+          onVerifyPin={(enteredPin) => {
+            const ok = verifyCurrentUserPin(enteredPin);
+            if (ok) {
+              setIsCounterLocked(false);
+              setUnlockModalOpen(false);
+            }
+            return ok;
+          }}
+          onClose={() => setUnlockModalOpen(false)}
         />
       )}
     </div>

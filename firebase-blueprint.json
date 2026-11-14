@@ -352,6 +352,13 @@
           "type": "boolean",
           "description": "Whether the user currently has access to the store."
         },
+        "pin": {
+          "type": "string",
+          "description": "4-digit numeric security PIN required at startup and counter unlock (defaults to 1234 until changed).",
+          "minLength": 4,
+          "maxLength": 4,
+          "pattern": "^\\d{4}$"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",

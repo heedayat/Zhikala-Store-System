@@ -3,6 +3,8 @@ import {
   ArrowLeftRight,
   BarChart3,
   ChevronDown,
+  Lock,
+  LockOpen,
   LogOut,
   Package,
   Settings,
@@ -11,10 +13,10 @@ import {
   Users,
 } from 'lucide-react';
 import { useTranslation } from '../contexts/I18nContext';
-import type { NavSection, UserRole } from '../types/inventory';
-import { isManagerRole } from '../utils/users';
+import type { NavSection, NetworkSyncStatus, UserRole } from '../types/inventory';
 import { LanguageToggle } from './LanguageToggle';
 import { StoreLogo } from './StoreLogo';
+import { SyncStatusBadge } from './SyncStatusBadge';
 
 interface MobileTopHeaderProps {
   shopName: string;
@@ -22,6 +24,12 @@ interface MobileTopHeaderProps {
   currency: string;
   userEmail: string;
   userRole: UserRole;
+  isManager: boolean;
+  canLockCounter: boolean;
+  isCounterLocked: boolean;
+  onToggleCounterLock: () => void;
+  syncStatus: NetworkSyncStatus;
+  hasPendingSync: boolean;
   onOpenSettings: () => void;
   onSignOut: () => void;
 }
@@ -32,11 +40,16 @@ export function MobileTopHeader({
   currency,
   userEmail,
   userRole,
+  isManager,
+  canLockCounter,
+  isCounterLocked,
+  onToggleCounterLock,
+  syncStatus,
+  hasPendingSync,
   onOpenSettings,
   onSignOut,
 }: MobileTopHeaderProps) {
   const { t, roleLabel, currencyUnit } = useTranslation();
-  const isManager = isManagerRole(userRole);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -59,15 +72,46 @@ export function MobileTopHeader({
   }, [menuOpen]);
 
   return (
-    <header className="md:hidden sticky top-0 z-30 h-14 px-3 sm:px-4 bg-white/95 backdrop-blur-md border-b border-slate-200 flex items-center justify-between gap-2 shrink-0 print-hidden">
-      <div className="flex items-center gap-2.5 min-w-0">
+    <header className="md:hidden sticky top-0 z-30 h-14 px-2.5 sm:px-4 bg-white/95 backdrop-blur-md border-b border-slate-200 flex items-center justify-between gap-1.5 shrink-0 print-hidden">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
         <StoreLogo logoUrl={logoUrl} shopName={shopName} />
         <span className="text-sm font-bold text-slate-950 tracking-tight truncate">
           {shopName}
         </span>
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
+        <SyncStatusBadge
+          status={syncStatus}
+          hasPendingSync={hasPendingSync}
+          compact
+          className="max-w-[116px] sm:max-w-none overflow-hidden"
+        />
+
+        {canLockCounter && (
+          <button
+            type="button"
+            data-testid="mobile-counter-lock-btn"
+            onClick={onToggleCounterLock}
+            aria-label={isCounterLocked ? t.nav.unlockAdmin : t.nav.lockCounter}
+            title={isCounterLocked ? t.nav.unlockAdminTooltip : t.nav.lockCounterTooltip}
+            className={`min-h-[36px] px-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1 transition-all duration-150 active:scale-[0.97] whitespace-nowrap shrink-0 ${
+              isCounterLocked
+                ? 'border-amber-300 bg-amber-50 text-amber-900'
+                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            {isCounterLocked ? (
+              <LockOpen className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+            ) : (
+              <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
+            )}
+            <span className="hidden sm:inline">
+              {isCounterLocked ? t.nav.unlockAdmin : t.nav.lockCounter}
+            </span>
+          </button>
+        )}
+
         <LanguageToggle compact />
 
         <div ref={menuRef} className="relative shrink-0">
@@ -77,10 +121,10 @@ export function MobileTopHeader({
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             aria-label={t.nav.accountMenu}
-            className="min-h-[40px] px-2.5 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-xs font-medium inline-flex items-center gap-1.5 transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap"
+            className="min-h-[38px] px-2 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-xs font-medium inline-flex items-center gap-1 transition-all duration-200 ease-out active:scale-[0.98] whitespace-nowrap"
           >
             <UserCircle2 className="w-4 h-4 text-slate-500 shrink-0" aria-hidden="true" />
-            <span>{roleLabel(userRole)}</span>
+            <span className="hidden sm:inline">{roleLabel(userRole)}</span>
             <ChevronDown
               className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
                 menuOpen ? 'rotate-180' : ''
@@ -111,7 +155,30 @@ export function MobileTopHeader({
               </div>
 
               <div className="p-1.5 space-y-1">
-                {isManager && (
+                {canLockCounter && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onToggleCounterLock();
+                    }}
+                    className={`w-full min-h-[40px] px-3 rounded-lg text-start text-xs font-medium flex items-center gap-2.5 transition-colors ${
+                      isCounterLocked
+                        ? 'text-amber-900 bg-amber-50/70 hover:bg-amber-100'
+                        : 'text-slate-800 hover:bg-slate-100'
+                    }`}
+                  >
+                    {isCounterLocked ? (
+                      <LockOpen className="w-4 h-4 text-amber-700 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <Lock className="w-4 h-4 text-slate-500 shrink-0" aria-hidden="true" />
+                    )}
+                    <span>{isCounterLocked ? t.nav.unlockAdmin : t.nav.lockCounter}</span>
+                  </button>
+                )}
+
+                {isManager && !isCounterLocked && (
                   <button
                     type="button"
                     role="menuitem"
@@ -150,31 +217,36 @@ export function MobileTopHeader({
 interface MobileBottomNavProps {
   activeSection: NavSection;
   onSelectSection: (section: NavSection) => void;
-  userRole: UserRole;
+  isManager: boolean;
+  isCounterLocked: boolean;
 }
 
 export function MobileBottomNav({
   activeSection,
   onSelectSection,
-  userRole,
+  isManager,
+  isCounterLocked,
 }: MobileBottomNavProps) {
   const { t } = useTranslation();
-  const isManager = isManagerRole(userRole);
 
   const navItems: {
     id: NavSection;
     label: string;
     icon: typeof Package;
+    lockedVisible?: boolean;
     managerOnly?: boolean;
   }[] = [
     { id: 'products', label: t.nav.products, icon: Package },
-    { id: 'sell', label: t.nav.sell, icon: ShoppingBag },
+    { id: 'sell', label: t.nav.sell, icon: ShoppingBag, lockedVisible: true },
     { id: 'stock', label: t.nav.stock, icon: ArrowLeftRight, managerOnly: true },
     { id: 'reports', label: t.nav.reports, icon: BarChart3, managerOnly: true },
     { id: 'users', label: t.nav.users, icon: Users, managerOnly: true },
   ];
 
-  const visibleItems = navItems.filter((item) => !item.managerOnly || isManager);
+  const visibleItems = navItems.filter((item) => {
+    if (isCounterLocked) return Boolean(item.lockedVisible);
+    return !item.managerOnly || isManager;
+  });
 
   return (
     <nav
@@ -183,7 +255,11 @@ export function MobileBottomNav({
     >
       <div
         className={`h-full grid ${
-          visibleItems.length === 2 ? 'grid-cols-2' : 'grid-cols-5'
+          visibleItems.length === 1
+            ? 'grid-cols-1'
+            : visibleItems.length === 2
+              ? 'grid-cols-2'
+              : 'grid-cols-5'
         } items-center gap-0.5`}
       >
         {visibleItems.map((item) => {
@@ -212,3 +288,4 @@ export function MobileBottomNav({
     </nav>
   );
 }
+
